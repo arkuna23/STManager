@@ -51,9 +51,11 @@ cmake_install.cmake
 install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
+.cache/
 _deps/
 
 # Build output
 build/
 bin/
 lib/
+out/

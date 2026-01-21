@@ -1,0 +1,49 @@
+---
+# Based on Google C++ Style
+BasedOnStyle: Google
+
+# Use C++11 standard
+Standard: Cpp11
+
+# Indents and spacing
+IndentWidth: 4
+ColumnLimit: 100
+TabWidth: 4
+UseTab: Never
+
+# Pointer and Reference alignment (Left is preferred in modern C++)
+# Result: void* p; instead of void *p;
+PointerAlignment: Left
+
+# Namespace handling
+# Do not indent inside namespaces to save horizontal space
+NamespaceIndentation: None
+FixNamespaceComments: true
+
+# Access modifiers (public, private, protected)
+# Align them with the class keyword
+AccessModifierOffset: -4
+
+# Braces wrapping
+# Attach style for classes and functions (Standard for Google/LLVM)
+BreakBeforeBraces: Attach
+
+# Padding and spaces
+# Ensure comments have a space after //
+SpacesInContainerLiterals: true
+SpaceAfterCStyleCast: true
+SpaceBeforeRangeBasedForLoopColon: true
+
+# Line breaks
+# Allow short functions on a single line if they are empty
+AllowShortFunctionsOnASingleLine: Inline
+# Always break after the template declaration
+AlwaysBreakTemplateDeclarations: Yes
+
+# Include sorting
+# Organize headers alphabetically
+SortIncludes: true
+
+# Documentation comments (English comments will look tidy)
+CommentPragmas: '^ IWYU pragma:'
+---
