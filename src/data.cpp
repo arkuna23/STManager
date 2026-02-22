@@ -1,13 +1,12 @@
-#include <STUtils/data.h>
+#include <STManager/data.h>
 
 #include <string>
 
 using namespace std;
-using DataMgr = STUtils::DataManager;
+using DataMgr = STManager::DataManager;
 
 DataMgr::DataManager(string path) {
     this->path = path;
 }
 
-// TODO
 DataMgr DataMgr::locate(const std::string& root) {}

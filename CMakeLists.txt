@@ -1,26 +1,31 @@
+cmake_minimum_required(VERSION 3.12)
+
+project(STManager VERSION 1.0.0 LANGUAGES CXX)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-cmake_minimum_required(VERSION 3.12)
-project(STUtils VERSION 1.0.0 LANGUAGES CXX)
-
-add_library(STUtils SHARED
+add_library(STManager SHARED
     src/data.cpp
 )
 
 include(GenerateExportHeader)
 
-set(STUTILS_EXPORT_H_PATH
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/STUtils/stutils_export.h")
-
-target_include_directories(STUtils PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
-    $<INSTALL_INTERFACE:include>)
-
-target_include_directories(STUtils PUBLIC 
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+set(STMANAGER_EXPORT_H_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/STManager/stmanager_export.h"
 )
 
-# 3. 设置 C++ 标准
-target_compile_features(STUtils PUBLIC cxx_std_11)
+get_filename_component(_export_dir "${STMANAGER_EXPORT_H_PATH}" DIRECTORY)
+file(MAKE_DIRECTORY "${_export_dir}")
+
+generate_export_header(STManager
+    EXPORT_FILE_NAME "${STMANAGER_EXPORT_H_PATH}"
+)
+
+target_include_directories(STManager
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
+        $<INSTALL_INTERFACE:include>
+)
+
+target_compile_features(STManager PUBLIC cxx_std_11)

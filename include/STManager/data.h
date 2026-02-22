@@ -1,11 +1,11 @@
-#ifndef STUTILS_DATA_MANAGER_HPP
-#define STUTILS_DATA_MANAGER_HPP
+#ifndef STMANAGER_DATA_MANAGER_HPP
+#define STMANAGER_DATA_MANAGER_HPP
 
-#include <STUtils/stutils_export.h>
+#include <STManager/stmanager_export.h>
 
 #include <string>
 
-namespace STUtils {
+namespace STManager {
 class DataManager {
 public:
     std::string path;
@@ -14,6 +14,6 @@ public:
 
     static DataManager locate(const std::string& root);
 };
-}  // namespace STUtils
+}  // namespace STManager
 
 #endif
