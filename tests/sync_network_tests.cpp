@@ -1,4 +1,5 @@
 #include <STManager/data.h>
+#include <STManager/manager.h>
 #include <STManager/sync.h>
 #include <STManager/tcp_transport.h>
 
@@ -10,6 +11,8 @@
 
 using STManager::DataManager;
 using STManager::JsonTrustedDeviceStore;
+using STManager::Manager;
+using STManager::RunSyncOptions;
 using STManager::ServerOptions;
 using STManager::Status;
 using STManager::StatusCode;
@@ -174,6 +177,37 @@ bool test_run_sync_server_rejects_null_bound_port() {
     return context.failed_assertions == 0;
 }
 
+bool test_manager_create_from_root_rejects_invalid_root() {
+    TestContext context;
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root("not-a-valid-root", &manager);
+    EXPECT_TRUE(context, !create_status.ok());
+    EXPECT_EQ(context, static_cast<int>(create_status.code), static_cast<int>(StatusCode::kInvalidRoot));
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_run_sync_rejects_null_result() {
+    TestContext context;
+
+    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-run-null-result");
+    EXPECT_TRUE(context, !root_path.empty());
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root_path, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    RunSyncOptions options;
+    options.server_options.advertise = false;
+    options.server_options.port = 0;
+    const Status run_status = manager.run_sync(options, NULL);
+    EXPECT_TRUE(context, !run_status.ok());
+    EXPECT_EQ(context, static_cast<int>(run_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+
+    STManagerTest::remove_directory_recursive(root_path);
+    return context.failed_assertions == 0;
+}
+
 struct TestCase {
     const char* name;
     bool (*fn)();
@@ -188,6 +222,8 @@ int main() {
         {"run_sync_server_rejects_invalid_data_manager", test_run_sync_server_rejects_invalid_data_manager},
         {"run_sync_server_rejects_empty_local_device_id", test_run_sync_server_rejects_empty_local_device_id},
         {"run_sync_server_rejects_null_bound_port", test_run_sync_server_rejects_null_bound_port},
+        {"manager_create_from_root_rejects_invalid_root", test_manager_create_from_root_rejects_invalid_root},
+        {"manager_run_sync_rejects_null_result", test_manager_run_sync_rejects_null_result},
     };
 
     int passed_count = 0;

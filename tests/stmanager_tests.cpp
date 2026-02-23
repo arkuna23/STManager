@@ -1,4 +1,5 @@
 #include <STManager/data.h>
+#include <STManager/manager.h>
 #include <STManager/sync.h>
 #include <archive.h>
 #include <archive_entry.h>
@@ -21,7 +22,11 @@ using STManager::DeviceInfo;
 using STManager::IDeviceDiscovery;
 using STManager::ISyncTransport;
 using STManager::ITrustedDeviceStore;
+using STManager::Manager;
 using STManager::PairingOptions;
+using STManager::PairSyncOptions;
+using STManager::PairSyncRequest;
+using STManager::PairSyncResult;
 using STManager::Status;
 using STManager::StatusCode;
 using STManager::SyncDirection;
@@ -836,6 +841,94 @@ bool test_discover_devices_autostarts_discovery() {
     return context.failed_assertions == 0;
 }
 
+bool test_manager_create_from_root_creates_state() {
+    TestContext context;
+
+    const std::string root = STManagerTest::create_sillytavern_fixture("manager-create-state");
+    TempDirGuard root_guard(root);
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+    EXPECT_EQ(context, manager.root_path(), root);
+    EXPECT_TRUE(context, !manager.local_device_id().empty());
+    EXPECT_TRUE(context, STManagerTest::path_exists(
+        STManagerTest::join_path(root, ".stmanager/device_id")));
+    EXPECT_TRUE(context, manager.state_dir().find(".stmanager") != std::string::npos);
+
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_create_from_root_reuses_existing_device_id() {
+    TestContext context;
+
+    const std::string root = STManagerTest::create_sillytavern_fixture("manager-reuse-device-id");
+    TempDirGuard root_guard(root);
+
+    EXPECT_TRUE(context, STManagerTest::create_directories(STManagerTest::join_path(root, ".stmanager")));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+        STManagerTest::join_path(root, ".stmanager/device_id"),
+        "fixed-device-id\n"));
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+    EXPECT_EQ(context, manager.local_device_id(), std::string("fixed-device-id"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_resolve_pair_target_direct_host_defaults_port() {
+    TestContext context;
+
+    const std::string root = STManagerTest::create_sillytavern_fixture("manager-resolve-direct");
+    TempDirGuard root_guard(root);
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    PairSyncRequest request;
+    request.device_id = "device-direct";
+    request.host = "127.0.0.1";
+    request.port = 0;
+
+    std::vector<DeviceInfo> candidates;
+    DeviceInfo auto_selected;
+    const Status resolve_status = manager.resolve_pair_target(request, &candidates, &auto_selected);
+    EXPECT_TRUE(context, resolve_status.ok());
+    EXPECT_EQ(context, candidates.size(), static_cast<size_t>(1));
+    EXPECT_EQ(context, auto_selected.device_id, std::string("device-direct"));
+    EXPECT_EQ(context, auto_selected.host, std::string("127.0.0.1"));
+    EXPECT_EQ(context, auto_selected.port, 38591);
+
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_pair_sync_rejects_invalid_remote_endpoint() {
+    TestContext context;
+
+    const std::string root = STManagerTest::create_sillytavern_fixture("manager-pair-invalid-endpoint");
+    TempDirGuard root_guard(root);
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    DeviceInfo remote_device;
+    remote_device.device_id = "device-invalid";
+    remote_device.host = "0.0.0.0";
+    remote_device.port = 38591;
+
+    PairSyncOptions options;
+    PairSyncResult result;
+    const Status pair_status = manager.pair_sync(remote_device, options, &result);
+    EXPECT_TRUE(context, !pair_status.ok());
+    EXPECT_EQ(context, static_cast<int>(pair_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+
+    return context.failed_assertions == 0;
+}
+
 struct TestCase {
     const char* name;
     bool (*fn)();
@@ -864,6 +957,10 @@ int main() {
         {"sync_pair_then_push_success", test_sync_pair_then_push_success},
         {"sync_pull_restores_to_override_root", test_sync_pull_restores_to_override_root},
         {"discover_devices_autostarts_discovery", test_discover_devices_autostarts_discovery},
+        {"manager_create_from_root_creates_state", test_manager_create_from_root_creates_state},
+        {"manager_create_from_root_reuses_existing_device_id", test_manager_create_from_root_reuses_existing_device_id},
+        {"manager_resolve_pair_target_direct_host_defaults_port", test_manager_resolve_pair_target_direct_host_defaults_port},
+        {"manager_pair_sync_rejects_invalid_remote_endpoint", test_manager_pair_sync_rejects_invalid_remote_endpoint},
     };
 
     int passed_count = 0;

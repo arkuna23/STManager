@@ -145,11 +145,18 @@ The discovered endpoint host is always a connectable LAN address (not `0.0.0.0`)
 ## Library Quick Start
 
 ```cpp
-#include <STManager/data.h>
+#include <STManager/sync.h>
+#include <STManager/manager.h>
 
-STManager::DataManager manager = STManager::DataManager::locate("/path/to/SillyTavern");
-if (manager.is_valid()) {
-    // backup/restore/sync operations
+STManager::Manager manager;
+STManager::Status create_status =
+    STManager::Manager::create_from_root("/path/to/SillyTavern", &manager);
+if (create_status.ok()) {
+    STManager::RunSyncOptions options;
+    options.server_options.port = 38591;
+    STManager::RunSyncResult result;
+    // blocks until server stops
+    STManager::Status run_status = manager.run_sync(options, &result);
 }
 ```
 
@@ -158,4 +165,4 @@ if (manager.is_valid()) {
 - CMake presets are provided in `CMakePresets.json`.
 - Device discovery/advertise is implemented inside the library via UDP LAN discovery and does not require Avahi daemon.
 - `run --bind` controls listening interface only; discovery returns peer-reachable source IP for connection.
-- Trust state is stored under `<root>/.stmanager/` by the CLI.
+- Trust/device state is managed by the library under `<root>/.stmanager/`.

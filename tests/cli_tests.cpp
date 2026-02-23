@@ -1,5 +1,7 @@
 #include "test_helpers.h"
 
+#include <STManager/manager.h>
+
 #include "cli_args.h"
 #include "cli_net.h"
 #include "cli_state.h"
@@ -122,22 +124,17 @@ bool test_detect_sillytavern_root_from_parent() {
     return context.failed_assertions == 0;
 }
 
-bool test_init_local_state_creates_device_id() {
+bool test_manager_create_from_root_creates_device_id() {
     TestContext context;
 
-    const std::string fixture_root = STManagerTest::create_sillytavern_fixture("cli-local-state");
+    const std::string fixture_root = STManagerTest::create_sillytavern_fixture("cli-manager-state");
     TempDirGuard fixture_guard(fixture_root);
 
-    std::string local_device_id;
-    std::string trusted_store_path;
-    std::string error_message;
-    EXPECT_TRUE(context, STManagerCli::init_local_state(
-        fixture_root,
-        &local_device_id,
-        &trusted_store_path,
-        &error_message));
-    EXPECT_TRUE(context, !local_device_id.empty());
-    EXPECT_TRUE(context, trusted_store_path.find(".stmanager/trusted_devices.json") != std::string::npos);
+    STManager::Manager manager;
+    const STManager::Status create_status = STManager::Manager::create_from_root(fixture_root, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+    EXPECT_TRUE(context, !manager.local_device_id().empty());
+    EXPECT_TRUE(context, manager.state_dir().find(".stmanager") != std::string::npos);
     EXPECT_TRUE(context, STManagerTest::path_exists(
         STManagerTest::join_path(fixture_root, ".stmanager/device_id")));
 
@@ -167,7 +164,7 @@ int main() {
         {"parse_run_defaults", test_parse_run_defaults},
         {"parse_pair_allows_missing_device_id", test_parse_pair_allows_missing_device_id},
         {"detect_sillytavern_root_from_parent", test_detect_sillytavern_root_from_parent},
-        {"init_local_state_creates_device_id", test_init_local_state_creates_device_id},
+        {"manager_create_from_root_creates_device_id", test_manager_create_from_root_creates_device_id},
         {"is_connectable_host_rejects_wildcard", test_is_connectable_host_rejects_wildcard},
     };
 
