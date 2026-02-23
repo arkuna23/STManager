@@ -3,16 +3,18 @@
 
 #include <STManager/sync.h>
 
+#include <cstdint>
+
 namespace STManager {
 
-struct RunSyncOptions {
+struct ServeSyncOptions {
     ServerOptions server_options;
 };
 
-struct RunSyncResult {
+struct ServeSyncResult {
     int bound_port;
 
-    RunSyncResult() : bound_port(0) {}
+    ServeSyncResult() : bound_port(0) {}
 };
 
 struct PairSyncRequest {
@@ -35,6 +37,26 @@ struct PairSyncResult {
     PairSyncResult() : selected_device(), paired_this_time(false) {}
 };
 
+struct ExportBackupOptions {
+    std::string file_path;
+    BackupOptions backup_options;
+
+    ExportBackupOptions() : file_path("st-backup.tar.zst"), backup_options() {}
+};
+
+struct ExportBackupResult {
+    std::string file_path;
+    uint64_t bytes_written;
+
+    ExportBackupResult() : file_path(), bytes_written(0) {}
+};
+
+struct RestoreBackupOptions {
+    std::string file_path;
+
+    RestoreBackupOptions() : file_path("st-backup.tar.zst") {}
+};
+
 class STMANAGER_EXPORT Manager {
 public:
     Manager();
@@ -51,11 +73,13 @@ public:
         std::vector<DeviceInfo>* candidates,
         DeviceInfo* auto_selected) const;
 
-    Status run_sync(const RunSyncOptions& options, RunSyncResult* result) const;
+    Status serve_sync(const ServeSyncOptions& options, ServeSyncResult* result) const;
     Status pair_sync(
         const DeviceInfo& device_info,
         const PairSyncOptions& options,
         PairSyncResult* result) const;
+    Status export_backup(const ExportBackupOptions& options, ExportBackupResult* result) const;
+    Status restore_backup(const RestoreBackupOptions& options) const;
 
 private:
     Status initialize_from_root(const std::string& root_path);

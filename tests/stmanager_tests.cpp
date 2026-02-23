@@ -19,6 +19,8 @@
 using STManager::BackupOptions;
 using STManager::DataManager;
 using STManager::DeviceInfo;
+using STManager::ExportBackupOptions;
+using STManager::ExportBackupResult;
 using STManager::IDeviceDiscovery;
 using STManager::ISyncTransport;
 using STManager::ITrustedDeviceStore;
@@ -27,6 +29,7 @@ using STManager::PairingOptions;
 using STManager::PairSyncOptions;
 using STManager::PairSyncRequest;
 using STManager::PairSyncResult;
+using STManager::RestoreBackupOptions;
 using STManager::Status;
 using STManager::StatusCode;
 using STManager::SyncDirection;
@@ -929,6 +932,78 @@ bool test_manager_pair_sync_rejects_invalid_remote_endpoint() {
     return context.failed_assertions == 0;
 }
 
+bool test_manager_export_backup_and_restore_backup_roundtrip() {
+    TestContext context;
+
+    const std::string source_root = STManagerTest::create_sillytavern_fixture("manager-export-src");
+    const std::string restore_root = STManagerTest::create_sillytavern_fixture("manager-export-dst");
+    TempDirGuard source_guard(source_root);
+    TempDirGuard restore_guard(restore_root);
+
+    EXPECT_TRUE(
+        context,
+        STManagerTest::write_file(
+            STManagerTest::join_path(source_root, "data/config.json"),
+            "{\"profile\":\"primary\"}"));
+    EXPECT_TRUE(
+        context,
+        STManagerTest::write_file(
+            STManagerTest::join_path(source_root, "public/scripts/extensions/ext-A/index.js"),
+            "console.log('A');"));
+    EXPECT_TRUE(
+        context,
+        STManagerTest::write_file(
+            STManagerTest::join_path(restore_root, "data/stale.json"),
+            "{\"stale\":true}"));
+
+    Manager source_manager;
+    Manager destination_manager;
+    EXPECT_STATUS_OK(context, Manager::create_from_root(source_root, &source_manager));
+    EXPECT_STATUS_OK(context, Manager::create_from_root(restore_root, &destination_manager));
+
+    ExportBackupOptions export_options;
+    export_options.file_path = STManagerTest::join_path(source_root, "st-backup.tar.zst");
+    ExportBackupResult export_result;
+    EXPECT_STATUS_OK(context, source_manager.export_backup(export_options, &export_result));
+    EXPECT_TRUE(context, STManagerTest::path_exists(export_result.file_path));
+    EXPECT_TRUE(context, export_result.bytes_written > 0);
+
+    RestoreBackupOptions restore_options;
+    restore_options.file_path = export_result.file_path;
+    EXPECT_STATUS_OK(context, destination_manager.restore_backup(restore_options));
+
+    EXPECT_EQ(
+        context,
+        STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/config.json")),
+        std::string("{\"profile\":\"primary\"}"));
+    EXPECT_EQ(
+        context,
+        STManagerTest::read_file(
+            STManagerTest::join_path(restore_root, "public/scripts/extensions/ext-A/index.js")),
+        std::string("console.log('A');"));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(restore_root, "data/stale.json")));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_restore_backup_rejects_missing_file() {
+    TestContext context;
+
+    const std::string root = STManagerTest::create_sillytavern_fixture("manager-restore-missing-file");
+    TempDirGuard root_guard(root);
+
+    Manager manager;
+    EXPECT_STATUS_OK(context, Manager::create_from_root(root, &manager));
+
+    RestoreBackupOptions restore_options;
+    restore_options.file_path = STManagerTest::join_path(root, "missing-backup.tar.zst");
+    const Status restore_status = manager.restore_backup(restore_options);
+    EXPECT_TRUE(context, !restore_status.ok());
+    EXPECT_EQ(context, static_cast<int>(restore_status.code), static_cast<int>(StatusCode::kIoError));
+
+    return context.failed_assertions == 0;
+}
+
 struct TestCase {
     const char* name;
     bool (*fn)();
@@ -961,6 +1036,9 @@ int main() {
         {"manager_create_from_root_reuses_existing_device_id", test_manager_create_from_root_reuses_existing_device_id},
         {"manager_resolve_pair_target_direct_host_defaults_port", test_manager_resolve_pair_target_direct_host_defaults_port},
         {"manager_pair_sync_rejects_invalid_remote_endpoint", test_manager_pair_sync_rejects_invalid_remote_endpoint},
+        {"manager_export_backup_and_restore_backup_roundtrip",
+         test_manager_export_backup_and_restore_backup_roundtrip},
+        {"manager_restore_backup_rejects_missing_file", test_manager_restore_backup_rejects_missing_file},
     };
 
     int passed_count = 0;

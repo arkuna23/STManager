@@ -36,10 +36,14 @@ bool parse_bool_value(const std::string& value, bool* output) {
     return false;
 }
 
-bool parse_run_args(int argc, char** argv, ParsedArgs* parsed_args, std::string* error_message) {
-    RunArgs args;
+bool parse_serve_backup_args(
+    int argc,
+    char** argv,
+    ParsedArgs* parsed_args,
+    std::string* error_message) {
+    ServeBackupArgs args;
 
-    for (int index = 2; index < argc; ++index) {
+    for (int index = 3; index < argc; ++index) {
         const std::string flag = argv[index];
         if (flag == "--root" && index + 1 < argc) {
             args.root_path = argv[++index];
@@ -68,19 +72,23 @@ bool parse_run_args(int argc, char** argv, ParsedArgs* parsed_args, std::string*
             continue;
         }
 
-        *error_message = "Unknown run argument: " + flag;
+        *error_message = "Unknown serve backup argument: " + flag;
         return false;
     }
 
-    parsed_args->command_type = CommandType::kRun;
-    parsed_args->run_args = args;
+    parsed_args->command_type = CommandType::kServeBackup;
+    parsed_args->serve_backup_args = args;
     return true;
 }
 
-bool parse_pair_args(int argc, char** argv, ParsedArgs* parsed_args, std::string* error_message) {
-    PairArgs args;
+bool parse_pair_restore_args(
+    int argc,
+    char** argv,
+    ParsedArgs* parsed_args,
+    std::string* error_message) {
+    PairRestoreArgs args;
 
-    for (int index = 2; index < argc; ++index) {
+    for (int index = 3; index < argc; ++index) {
         const std::string flag = argv[index];
         if (flag == "--root" && index + 1 < argc) {
             args.root_path = argv[++index];
@@ -109,37 +117,127 @@ bool parse_pair_args(int argc, char** argv, ParsedArgs* parsed_args, std::string
             args.destination_root = argv[++index];
             continue;
         }
+
+        *error_message = "Unknown pair restore argument: " + flag;
+        return false;
+    }
+
+    parsed_args->command_type = CommandType::kPairRestore;
+    parsed_args->pair_restore_args = args;
+    return true;
+}
+
+bool parse_export_backup_args(
+    int argc,
+    char** argv,
+    ParsedArgs* parsed_args,
+    std::string* error_message) {
+    ExportBackupArgs args;
+
+    for (int index = 3; index < argc; ++index) {
+        const std::string flag = argv[index];
+        if (flag == "--root" && index + 1 < argc) {
+            args.root_path = argv[++index];
+            continue;
+        }
+        if (flag == "--file" && index + 1 < argc) {
+            args.file_path = argv[++index];
+            continue;
+        }
         if (flag == "--git-mode") {
             args.git_mode = true;
             continue;
         }
 
-        *error_message = "Unknown pair argument: " + flag;
+        *error_message = "Unknown export backup argument: " + flag;
         return false;
     }
 
-    parsed_args->command_type = CommandType::kPair;
-    parsed_args->pair_args = args;
+    parsed_args->command_type = CommandType::kExportBackup;
+    parsed_args->export_backup_args = args;
+    return true;
+}
+
+bool parse_restore_backup_args(
+    int argc,
+    char** argv,
+    ParsedArgs* parsed_args,
+    std::string* error_message) {
+    RestoreBackupArgs args;
+
+    for (int index = 3; index < argc; ++index) {
+        const std::string flag = argv[index];
+        if (flag == "--root" && index + 1 < argc) {
+            args.root_path = argv[++index];
+            continue;
+        }
+        if (flag == "--file" && index + 1 < argc) {
+            args.file_path = argv[++index];
+            continue;
+        }
+
+        *error_message = "Unknown restore backup argument: " + flag;
+        return false;
+    }
+
+    parsed_args->command_type = CommandType::kRestoreBackup;
+    parsed_args->restore_backup_args = args;
     return true;
 }
 
 }  // namespace
 
 bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string* error_message) {
+    if (parsed_args == NULL || error_message == NULL) {
+        return false;
+    }
     if (argc < 2) {
         *error_message = "Missing command";
         return false;
     }
-    if (parsed_args == NULL || error_message == NULL) {
+
+    const std::string command = argv[1];
+    if (command != "serve" && command != "pair" && command != "export" && command != "restore") {
+        *error_message = "Unknown command: " + command;
         return false;
     }
 
-    const std::string command = argv[1];
-    if (command == "run") {
-        return parse_run_args(argc, argv, parsed_args, error_message);
+    if (argc < 3) {
+        *error_message = "Missing action";
+        return false;
     }
+    const std::string action = argv[2];
+
+    if (command == "serve") {
+        if (action != "backup") {
+            *error_message = "Unknown serve action: " + action;
+            return false;
+        }
+        return parse_serve_backup_args(argc, argv, parsed_args, error_message);
+    }
+
     if (command == "pair") {
-        return parse_pair_args(argc, argv, parsed_args, error_message);
+        if (action != "restore") {
+            *error_message = "Unknown pair action: " + action;
+            return false;
+        }
+        return parse_pair_restore_args(argc, argv, parsed_args, error_message);
+    }
+
+    if (command == "export") {
+        if (action != "backup") {
+            *error_message = "Unknown export action: " + action;
+            return false;
+        }
+        return parse_export_backup_args(argc, argv, parsed_args, error_message);
+    }
+
+    if (command == "restore") {
+        if (action != "backup") {
+            *error_message = "Unknown restore action: " + action;
+            return false;
+        }
+        return parse_restore_backup_args(argc, argv, parsed_args, error_message);
     }
 
     *error_message = "Unknown command: " + command;
@@ -150,13 +248,18 @@ std::string build_help_text() {
     std::ostringstream out;
     out << "STManager CLI\n\n";
     out << "Commands:\n";
-    out << "  stmanager run [--root <path>] [--bind <host>] [--port <port>] "
+    out << "  stmanager serve backup [--root <path>] [--bind <host>] [--port <port>] "
            "[--pairing-code <code>] [--advertise true|false]\n";
-    out << "  stmanager pair [--root <path>] [--host <ip>] [--port <port>] [--device-id <id>] "
-           "[--pairing-code <code>] [--dest-root <path>] [--git-mode]\n";
+    out << "  stmanager pair restore [--root <path>] [--host <ip>] [--port <port>] "
+           "[--device-id <id>] [--pairing-code <code>] [--dest-root <path>]\n";
+    out << "  stmanager export backup [--root <path>] [--file <path>] [--git-mode]\n";
+    out << "  stmanager restore backup [--root <path>] [--file <path>]\n";
     out << "\nDefaults:\n";
-    out << "  run --port defaults to " << kDefaultSyncPort << "\n";
-    out << "  pair with --host but no --port uses " << kDefaultSyncPort << "\n";
+    out << "  serve backup --port defaults to " << kDefaultSyncPort << "\n";
+    out << "  pair restore with --host but no --port uses " << kDefaultSyncPort << "\n";
+    out << "  export/restore backup --file defaults to " << kDefaultBackupFilePath << "\n";
+    out << "\nTip:\n";
+    out << "  Run `stmanager` with no arguments to open interactive action menu.\n";
     return out.str();
 }
 

@@ -43,7 +43,8 @@ struct ServerOptions {
     bool advertise;
     std::string advertise_name;
 
-    ServerOptions() : bind_host("0.0.0.0"), port(0), pairing_code(), advertise(true), advertise_name() {}
+    ServerOptions()
+        : bind_host("0.0.0.0"), port(0), pairing_code(), advertise(true), advertise_name() {}
 };
 
 class STMANAGER_EXPORT ISyncTransport {
@@ -83,12 +84,9 @@ public:
 
 class STMANAGER_EXPORT SyncManager {
 public:
-    SyncManager(
-        const DataManager& data_manager,
-        const std::string& local_device_id,
-        ISyncTransport* transport,
-        IDeviceDiscovery* discovery,
-        ITrustedDeviceStore* trusted_store);
+    SyncManager(const DataManager& data_manager, const std::string& local_device_id,
+                ISyncTransport* transport, IDeviceDiscovery* discovery,
+                ITrustedDeviceStore* trusted_store);
 
     Status discover_devices(std::vector<DeviceInfo>* devices) const;
     Status pair_device(const DeviceInfo& device_info, const PairingOptions& options);
@@ -96,7 +94,8 @@ public:
     Status push_to_device(const DeviceInfo& device_info, const SyncOptions& options) const;
     Status pull_from_device(const DeviceInfo& device_info, const SyncOptions& options) const;
 
-    Status sync(SyncDirection direction, const DeviceInfo& device_info, const SyncOptions& options) const;
+    Status sync(SyncDirection direction, const DeviceInfo& device_info,
+                const SyncOptions& options) const;
 
 private:
     const DataManager& data_manager_;
@@ -136,12 +135,10 @@ private:
     std::vector<std::string> trusted_device_ids_;
 };
 
-STMANAGER_EXPORT Status run_sync_server(
-    const DataManager& data_manager,
-    const std::string& local_device_id,
-    ITrustedDeviceStore* trusted_store,
-    const ServerOptions& options,
-    int* bound_port);
+STMANAGER_EXPORT Status serve_sync_server(const DataManager& data_manager,
+                                          const std::string& local_device_id,
+                                          ITrustedDeviceStore* trusted_store,
+                                          const ServerOptions& options, int* bound_port);
 
 }  // namespace STManager
 

@@ -5,6 +5,7 @@ STManager is a C++11 library and CLI for managing SillyTavern data.
 It provides:
 - SillyTavern root detection (`data` and `public/scripts/extensions`)
 - Backup/restore using streaming `tar + zstd`
+- Local backup archive export/import (`.tar.zst`)
 - Device sync primitives (pairing, trust store, pull sync)
 - A CLI binary (`stmanager`) for simple cross-device sync
 
@@ -112,12 +113,18 @@ ctest --preset linux-release-static
 
 ## CLI Usage
 
+Run with no arguments to open an interactive action menu:
+
+```bash
+./build/linux-release-static/stmanager
+```
+
 ### Start source device
 
 Run this on the device you want to pull data from:
 
 ```bash
-./build/linux-release-static/stmanager run --root /path/to/SillyTavern
+./build/linux-release-static/stmanager serve backup --root /path/to/SillyTavern
 ```
 
 Defaults:
@@ -128,7 +135,7 @@ Defaults:
 ### Pair and pull from destination device
 
 ```bash
-./build/linux-release-static/stmanager pair \
+./build/linux-release-static/stmanager pair restore \
   --root /path/to/local/SillyTavern
 ```
 
@@ -137,10 +144,32 @@ Optional flags:
 - `--host <ip>` and `--port <port>`: direct connection bypassing discovery
 - `--pairing-code <code>`
 - `--dest-root <path>` to restore into another root
-- `--git-mode` for extension backup behavior
 
-If `--device-id` is not provided, `pair` auto-discovers devices in the local network and shows a list for interactive selection.
+If `--device-id` is not provided, `pair restore` auto-discovers devices in the local network and shows a list for interactive selection.
 The discovered endpoint host is always a connectable LAN address (not `0.0.0.0`).
+
+### Export local backup archive
+
+```bash
+./build/linux-release-static/stmanager export backup \
+  --root /path/to/SillyTavern \
+  --file /path/to/st-backup.tar.zst
+```
+
+Optional flags:
+- `--file <path>` defaults to `st-backup.tar.zst`
+- `--git-mode` enables git extension manifest behavior
+
+### Restore from local backup archive
+
+```bash
+./build/linux-release-static/stmanager restore backup \
+  --root /path/to/SillyTavern \
+  --file /path/to/st-backup.tar.zst
+```
+
+Optional flags:
+- `--file <path>` defaults to `st-backup.tar.zst`
 
 ## Library Quick Start
 
@@ -152,11 +181,11 @@ STManager::Manager manager;
 STManager::Status create_status =
     STManager::Manager::create_from_root("/path/to/SillyTavern", &manager);
 if (create_status.ok()) {
-    STManager::RunSyncOptions options;
+    STManager::ServeSyncOptions options;
     options.server_options.port = 38591;
-    STManager::RunSyncResult result;
+    STManager::ServeSyncResult result;
     // blocks until server stops
-    STManager::Status run_status = manager.run_sync(options, &result);
+    STManager::Status run_status = manager.serve_sync(options, &result);
 }
 ```
 
@@ -164,5 +193,5 @@ if (create_status.ok()) {
 
 - CMake presets are provided in `CMakePresets.json`.
 - Device discovery/advertise is implemented inside the library via UDP LAN discovery and does not require Avahi daemon.
-- `run --bind` controls listening interface only; discovery returns peer-reachable source IP for connection.
+- `serve backup --bind` controls listening interface only; discovery returns peer-reachable source IP for connection.
 - Trust/device state is managed by the library under `<root>/.stmanager/`.

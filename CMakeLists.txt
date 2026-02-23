@@ -43,6 +43,26 @@ add_library(STManagerStatic STATIC
     ${STMANAGER_SOURCES}
 )
 
+if(ANDROID)
+    set(STMANAGER_ANDROID_16KB_PAGE_LINK_OPTION "-Wl,-z,max-page-size=16384")
+    set(_stmanager_android_has_16kb_page_flag FALSE)
+    foreach(_stmanager_linker_flags_var
+            CMAKE_EXE_LINKER_FLAGS
+            CMAKE_SHARED_LINKER_FLAGS
+            CMAKE_MODULE_LINKER_FLAGS)
+        if("${${_stmanager_linker_flags_var}}" MATCHES "max-page-size=16384")
+            set(_stmanager_android_has_16kb_page_flag TRUE)
+        endif()
+    endforeach()
+
+    if(NOT _stmanager_android_has_16kb_page_flag)
+        if(STMANAGER_BUILD_SHARED)
+            target_link_options(STManager PRIVATE "${STMANAGER_ANDROID_16KB_PAGE_LINK_OPTION}")
+        endif()
+        target_link_options(STManagerStatic INTERFACE "${STMANAGER_ANDROID_16KB_PAGE_LINK_OPTION}")
+    endif()
+endif()
+
 find_package(LibArchive REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Threads REQUIRED)

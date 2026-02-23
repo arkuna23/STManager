@@ -10,9 +10,11 @@
 #include <string>
 
 using STManager::DataManager;
+using STManager::ExportBackupOptions;
 using STManager::JsonTrustedDeviceStore;
 using STManager::Manager;
-using STManager::RunSyncOptions;
+using STManager::RestoreBackupOptions;
+using STManager::ServeSyncOptions;
 using STManager::ServerOptions;
 using STManager::Status;
 using STManager::StatusCode;
@@ -102,7 +104,7 @@ bool test_tcp_transport_fails_when_disconnected() {
     return context.failed_assertions == 0;
 }
 
-bool test_run_sync_server_rejects_invalid_data_manager() {
+bool test_serve_sync_server_rejects_invalid_data_manager() {
     TestContext context;
 
     const DataManager invalid_manager("not-a-valid-root");
@@ -112,7 +114,7 @@ bool test_run_sync_server_rejects_invalid_data_manager() {
     int bound_port = 0;
 
     JsonTrustedDeviceStore trusted_store("/tmp/stmanager-trusted-unused.json");
-    const Status run_status = STManager::run_sync_server(
+    const Status run_status = STManager::serve_sync_server(
         invalid_manager,
         "server-id",
         &trusted_store,
@@ -124,7 +126,7 @@ bool test_run_sync_server_rejects_invalid_data_manager() {
     return context.failed_assertions == 0;
 }
 
-bool test_run_sync_server_rejects_empty_local_device_id() {
+bool test_serve_sync_server_rejects_empty_local_device_id() {
     TestContext context;
 
     const std::string root_path = STManagerTest::create_sillytavern_fixture("server-empty-device-id");
@@ -138,7 +140,7 @@ bool test_run_sync_server_rejects_empty_local_device_id() {
     options.port = 0;
     int bound_port = 0;
     JsonTrustedDeviceStore trusted_store("/tmp/stmanager-trusted-unused.json");
-    const Status run_status = STManager::run_sync_server(
+    const Status run_status = STManager::serve_sync_server(
         manager,
         "",
         &trusted_store,
@@ -151,7 +153,7 @@ bool test_run_sync_server_rejects_empty_local_device_id() {
     return context.failed_assertions == 0;
 }
 
-bool test_run_sync_server_rejects_null_bound_port() {
+bool test_serve_sync_server_rejects_null_bound_port() {
     TestContext context;
 
     const std::string root_path = STManagerTest::create_sillytavern_fixture("server-null-bound-port");
@@ -164,7 +166,7 @@ bool test_run_sync_server_rejects_null_bound_port() {
     options.advertise = false;
     options.port = 0;
     JsonTrustedDeviceStore trusted_store("/tmp/stmanager-trusted-unused.json");
-    const Status run_status = STManager::run_sync_server(
+    const Status run_status = STManager::serve_sync_server(
         manager,
         "device-id",
         &trusted_store,
@@ -187,22 +189,68 @@ bool test_manager_create_from_root_rejects_invalid_root() {
     return context.failed_assertions == 0;
 }
 
-bool test_manager_run_sync_rejects_null_result() {
+bool test_manager_serve_sync_rejects_null_result() {
     TestContext context;
 
-    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-run-null-result");
+    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-serve-null-result");
     EXPECT_TRUE(context, !root_path.empty());
 
     Manager manager;
     const Status create_status = Manager::create_from_root(root_path, &manager);
     EXPECT_TRUE(context, create_status.ok());
 
-    RunSyncOptions options;
+    ServeSyncOptions options;
     options.server_options.advertise = false;
     options.server_options.port = 0;
-    const Status run_status = manager.run_sync(options, NULL);
+    const Status run_status = manager.serve_sync(options, NULL);
     EXPECT_TRUE(context, !run_status.ok());
     EXPECT_EQ(context, static_cast<int>(run_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+
+    STManagerTest::remove_directory_recursive(root_path);
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_export_backup_rejects_null_result() {
+    TestContext context;
+
+    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-export-null-result");
+    EXPECT_TRUE(context, !root_path.empty());
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root_path, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    ExportBackupOptions options;
+    options.file_path = STManagerTest::join_path(root_path, "backup.tar.zst");
+    const Status export_status = manager.export_backup(options, NULL);
+    EXPECT_TRUE(context, !export_status.ok());
+    EXPECT_EQ(
+        context,
+        static_cast<int>(export_status.code),
+        static_cast<int>(StatusCode::kSyncProtocolError));
+
+    STManagerTest::remove_directory_recursive(root_path);
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_restore_backup_rejects_empty_file_path() {
+    TestContext context;
+
+    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-restore-empty-file");
+    EXPECT_TRUE(context, !root_path.empty());
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root_path, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    RestoreBackupOptions options;
+    options.file_path.clear();
+    const Status restore_status = manager.restore_backup(options);
+    EXPECT_TRUE(context, !restore_status.ok());
+    EXPECT_EQ(
+        context,
+        static_cast<int>(restore_status.code),
+        static_cast<int>(StatusCode::kSyncProtocolError));
 
     STManagerTest::remove_directory_recursive(root_path);
     return context.failed_assertions == 0;
@@ -219,11 +267,13 @@ int main() {
     const TestCase test_cases[] = {
         {"tcp_transport_rejects_invalid_connect_args", test_tcp_transport_rejects_invalid_connect_args},
         {"tcp_transport_fails_when_disconnected", test_tcp_transport_fails_when_disconnected},
-        {"run_sync_server_rejects_invalid_data_manager", test_run_sync_server_rejects_invalid_data_manager},
-        {"run_sync_server_rejects_empty_local_device_id", test_run_sync_server_rejects_empty_local_device_id},
-        {"run_sync_server_rejects_null_bound_port", test_run_sync_server_rejects_null_bound_port},
+        {"serve_sync_server_rejects_invalid_data_manager", test_serve_sync_server_rejects_invalid_data_manager},
+        {"serve_sync_server_rejects_empty_local_device_id", test_serve_sync_server_rejects_empty_local_device_id},
+        {"serve_sync_server_rejects_null_bound_port", test_serve_sync_server_rejects_null_bound_port},
         {"manager_create_from_root_rejects_invalid_root", test_manager_create_from_root_rejects_invalid_root},
-        {"manager_run_sync_rejects_null_result", test_manager_run_sync_rejects_null_result},
+        {"manager_serve_sync_rejects_null_result", test_manager_serve_sync_rejects_null_result},
+        {"manager_export_backup_rejects_null_result", test_manager_export_backup_rejects_null_result},
+        {"manager_restore_backup_rejects_empty_file_path", test_manager_restore_backup_rejects_empty_file_path},
     };
 
     int passed_count = 0;

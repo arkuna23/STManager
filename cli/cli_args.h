@@ -6,21 +6,24 @@
 namespace STManagerCli {
 
 const int kDefaultSyncPort = 38591;
+const char* const kDefaultBackupFilePath = "st-backup.tar.zst";
 
 enum class CommandType {
     kUnknown = 0,
-    kRun,
-    kPair,
+    kServeBackup,
+    kPairRestore,
+    kExportBackup,
+    kRestoreBackup,
 };
 
-struct RunArgs {
+struct ServeBackupArgs {
     std::string root_path;
     std::string bind_host;
     int port;
     std::string pairing_code;
     bool advertise;
 
-    RunArgs()
+    ServeBackupArgs()
         : root_path(),
           bind_host("0.0.0.0"),
           port(kDefaultSyncPort),
@@ -28,24 +31,45 @@ struct RunArgs {
           advertise(true) {}
 };
 
-struct PairArgs {
+struct PairRestoreArgs {
     std::string root_path;
     std::string host;
     int port;
     std::string device_id;
     std::string pairing_code;
     std::string destination_root;
+
+    PairRestoreArgs() : root_path(), host(), port(0), device_id(), pairing_code(), destination_root() {}
+};
+
+struct ExportBackupArgs {
+    std::string root_path;
+    std::string file_path;
     bool git_mode;
 
-    PairArgs() : root_path(), host(), port(0), device_id(), pairing_code(), destination_root(), git_mode(false) {}
+    ExportBackupArgs() : root_path(), file_path(kDefaultBackupFilePath), git_mode(false) {}
+};
+
+struct RestoreBackupArgs {
+    std::string root_path;
+    std::string file_path;
+
+    RestoreBackupArgs() : root_path(), file_path(kDefaultBackupFilePath) {}
 };
 
 struct ParsedArgs {
     CommandType command_type;
-    RunArgs run_args;
-    PairArgs pair_args;
+    ServeBackupArgs serve_backup_args;
+    PairRestoreArgs pair_restore_args;
+    ExportBackupArgs export_backup_args;
+    RestoreBackupArgs restore_backup_args;
 
-    ParsedArgs() : command_type(CommandType::kUnknown), run_args(), pair_args() {}
+    ParsedArgs()
+        : command_type(CommandType::kUnknown),
+          serve_backup_args(),
+          pair_restore_args(),
+          export_backup_args(),
+          restore_backup_args() {}
 };
 
 bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string* error_message);

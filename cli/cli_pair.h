@@ -12,7 +12,7 @@
 namespace STManagerCli {
 
 bool select_pair_device(
-    const PairArgs& pair_args,
+    const PairRestoreArgs& pair_args,
     const std::vector<STManager::DeviceInfo>& candidates,
     const STManager::DeviceInfo& auto_selected,
     std::istream& input_stream,

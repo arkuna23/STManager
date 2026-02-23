@@ -492,7 +492,7 @@ Status create_listen_socket(const ServerOptions& options, int* listen_fd, int* b
 
 }  // namespace
 
-Status run_sync_server(
+Status serve_sync_server(
     const DataManager& data_manager,
     const std::string& local_device_id,
     ITrustedDeviceStore* trusted_store,

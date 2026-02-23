@@ -74,36 +74,100 @@ private:
     std::string original_path_;
 };
 
-bool test_parse_run_defaults() {
+bool test_parse_serve_backup_defaults() {
     TestContext context;
 
     char command_0[] = "stmanager";
-    char command_1[] = "run";
-    char* argv[] = {command_0, command_1};
+    char command_1[] = "serve";
+    char command_2[] = "backup";
+    char* argv[] = {command_0, command_1, command_2};
 
     STManagerCli::ParsedArgs parsed_args;
     std::string error_message;
-    EXPECT_TRUE(context, STManagerCli::parse_cli_args(2, argv, &parsed_args, &error_message));
-    EXPECT_EQ(context, static_cast<int>(parsed_args.command_type), static_cast<int>(STManagerCli::CommandType::kRun));
-    EXPECT_EQ(context, parsed_args.run_args.bind_host, std::string("0.0.0.0"));
-    EXPECT_EQ(context, parsed_args.run_args.port, STManagerCli::kDefaultSyncPort);
-    EXPECT_TRUE(context, parsed_args.run_args.advertise);
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(3, argv, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kServeBackup));
+    EXPECT_EQ(context, parsed_args.serve_backup_args.bind_host, std::string("0.0.0.0"));
+    EXPECT_EQ(context, parsed_args.serve_backup_args.port, STManagerCli::kDefaultSyncPort);
+    EXPECT_TRUE(context, parsed_args.serve_backup_args.advertise);
 
     return context.failed_assertions == 0;
 }
 
-bool test_parse_pair_allows_missing_device_id() {
+bool test_parse_pair_restore_allows_missing_device_id() {
     TestContext context;
 
     char command_0[] = "stmanager";
     char command_1[] = "pair";
+    char command_2[] = "restore";
+    char* argv[] = {command_0, command_1, command_2};
+
+    STManagerCli::ParsedArgs parsed_args;
+    std::string error_message;
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(3, argv, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kPairRestore));
+    EXPECT_TRUE(context, parsed_args.pair_restore_args.device_id.empty());
+
+    return context.failed_assertions == 0;
+}
+
+bool test_parse_export_backup_defaults() {
+    TestContext context;
+
+    char command_0[] = "stmanager";
+    char command_1[] = "export";
+    char command_2[] = "backup";
+    char* argv[] = {command_0, command_1, command_2};
+
+    STManagerCli::ParsedArgs parsed_args;
+    std::string error_message;
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(3, argv, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kExportBackup));
+    EXPECT_EQ(context, parsed_args.export_backup_args.file_path, std::string("st-backup.tar.zst"));
+    EXPECT_TRUE(context, !parsed_args.export_backup_args.git_mode);
+
+    return context.failed_assertions == 0;
+}
+
+bool test_parse_restore_backup_defaults() {
+    TestContext context;
+
+    char command_0[] = "stmanager";
+    char command_1[] = "restore";
+    char command_2[] = "backup";
+    char* argv[] = {command_0, command_1, command_2};
+
+    STManagerCli::ParsedArgs parsed_args;
+    std::string error_message;
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(3, argv, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kRestoreBackup));
+    EXPECT_EQ(context, parsed_args.restore_backup_args.file_path, std::string("st-backup.tar.zst"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_parse_serve_without_action_fails() {
+    TestContext context;
+
+    char command_0[] = "stmanager";
+    char command_1[] = "serve";
     char* argv[] = {command_0, command_1};
 
     STManagerCli::ParsedArgs parsed_args;
     std::string error_message;
-    EXPECT_TRUE(context, STManagerCli::parse_cli_args(2, argv, &parsed_args, &error_message));
-    EXPECT_EQ(context, static_cast<int>(parsed_args.command_type), static_cast<int>(STManagerCli::CommandType::kPair));
-    EXPECT_TRUE(context, parsed_args.pair_args.device_id.empty());
+    EXPECT_TRUE(context, !STManagerCli::parse_cli_args(2, argv, &parsed_args, &error_message));
+    EXPECT_EQ(context, error_message, std::string("Missing action"));
 
     return context.failed_assertions == 0;
 }
@@ -159,7 +223,7 @@ bool test_is_connectable_host_rejects_wildcard() {
 bool test_select_pair_device_prompts_for_single_candidate() {
     TestContext context;
 
-    STManagerCli::PairArgs pair_args;
+    STManagerCli::PairRestoreArgs pair_args;
 
     STManager::DeviceInfo candidate;
     candidate.device_id = "device-a";
@@ -194,7 +258,7 @@ bool test_select_pair_device_prompts_for_single_candidate() {
 bool test_select_pair_device_rejects_invalid_selection() {
     TestContext context;
 
-    STManagerCli::PairArgs pair_args;
+    STManagerCli::PairRestoreArgs pair_args;
 
     STManager::DeviceInfo first_candidate;
     first_candidate.device_id = "device-a";
@@ -236,7 +300,7 @@ bool test_select_pair_device_rejects_invalid_selection() {
 bool test_select_pair_device_skips_prompt_with_explicit_device_id() {
     TestContext context;
 
-    STManagerCli::PairArgs pair_args;
+    STManagerCli::PairRestoreArgs pair_args;
     pair_args.device_id = "device-a";
 
     STManager::DeviceInfo candidate;
@@ -271,7 +335,7 @@ bool test_select_pair_device_skips_prompt_with_explicit_device_id() {
 bool test_select_pair_device_rejects_unconnectable_endpoint() {
     TestContext context;
 
-    STManagerCli::PairArgs pair_args;
+    STManagerCli::PairRestoreArgs pair_args;
 
     STManager::DeviceInfo candidate;
     candidate.device_id = "device-a";
@@ -303,7 +367,7 @@ bool test_select_pair_device_rejects_unconnectable_endpoint() {
     return context.failed_assertions == 0;
 }
 
-bool test_select_command_run() {
+bool test_select_action_serve_backup() {
     TestContext context;
 
     std::istringstream input_stream("1\n");
@@ -311,7 +375,7 @@ bool test_select_command_run() {
     std::string error_message;
     STManagerCli::CommandType command_type = STManagerCli::CommandType::kUnknown;
 
-    const bool selected = STManagerCli::select_command(
+    const bool selected = STManagerCli::select_action(
         input_stream,
         output_stream,
         &error_message,
@@ -319,22 +383,26 @@ bool test_select_command_run() {
 
     EXPECT_TRUE(context, selected);
     EXPECT_TRUE(context, error_message.empty());
-    EXPECT_EQ(context, static_cast<int>(command_type), static_cast<int>(STManagerCli::CommandType::kRun));
-    EXPECT_TRUE(context, output_stream.str().find("Select command:\n") != std::string::npos);
-    EXPECT_TRUE(context, output_stream.str().find("Enter selection [1-2]: ") != std::string::npos);
+    EXPECT_EQ(
+        context,
+        static_cast<int>(command_type),
+        static_cast<int>(STManagerCli::CommandType::kServeBackup));
+    EXPECT_TRUE(context, output_stream.str().find("Select action:\n") != std::string::npos);
+    EXPECT_TRUE(context, output_stream.str().find("  [1] serve backup\n") != std::string::npos);
+    EXPECT_TRUE(context, output_stream.str().find("Select action [1-4]: ") != std::string::npos);
 
     return context.failed_assertions == 0;
 }
 
-bool test_select_command_pair() {
+bool test_select_action_restore_backup() {
     TestContext context;
 
-    std::istringstream input_stream("2\n");
+    std::istringstream input_stream("4\n");
     std::ostringstream output_stream;
     std::string error_message;
     STManagerCli::CommandType command_type = STManagerCli::CommandType::kUnknown;
 
-    const bool selected = STManagerCli::select_command(
+    const bool selected = STManagerCli::select_action(
         input_stream,
         output_stream,
         &error_message,
@@ -342,12 +410,15 @@ bool test_select_command_pair() {
 
     EXPECT_TRUE(context, selected);
     EXPECT_TRUE(context, error_message.empty());
-    EXPECT_EQ(context, static_cast<int>(command_type), static_cast<int>(STManagerCli::CommandType::kPair));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(command_type),
+        static_cast<int>(STManagerCli::CommandType::kRestoreBackup));
 
     return context.failed_assertions == 0;
 }
 
-bool test_select_command_rejects_invalid_input() {
+bool test_select_action_rejects_invalid_input() {
     TestContext context;
 
     std::istringstream input_stream("x\n");
@@ -355,14 +426,14 @@ bool test_select_command_rejects_invalid_input() {
     std::string error_message;
     STManagerCli::CommandType command_type = STManagerCli::CommandType::kUnknown;
 
-    const bool selected = STManagerCli::select_command(
+    const bool selected = STManagerCli::select_action(
         input_stream,
         output_stream,
         &error_message,
         &command_type);
 
     EXPECT_TRUE(context, !selected);
-    EXPECT_TRUE(context, error_message == "Invalid command selection. Please enter 1 or 2.");
+    EXPECT_TRUE(context, error_message == "Invalid action selection. Please enter 1 to 4.");
     EXPECT_EQ(context, static_cast<int>(command_type), static_cast<int>(STManagerCli::CommandType::kUnknown));
 
     return context.failed_assertions == 0;
@@ -377,8 +448,11 @@ struct TestCase {
 
 int main() {
     const TestCase test_cases[] = {
-        {"parse_run_defaults", test_parse_run_defaults},
-        {"parse_pair_allows_missing_device_id", test_parse_pair_allows_missing_device_id},
+        {"parse_serve_backup_defaults", test_parse_serve_backup_defaults},
+        {"parse_pair_restore_allows_missing_device_id", test_parse_pair_restore_allows_missing_device_id},
+        {"parse_export_backup_defaults", test_parse_export_backup_defaults},
+        {"parse_restore_backup_defaults", test_parse_restore_backup_defaults},
+        {"parse_serve_without_action_fails", test_parse_serve_without_action_fails},
         {"detect_sillytavern_root_from_parent", test_detect_sillytavern_root_from_parent},
         {"manager_create_from_root_creates_device_id", test_manager_create_from_root_creates_device_id},
         {"is_connectable_host_rejects_wildcard", test_is_connectable_host_rejects_wildcard},
@@ -388,9 +462,9 @@ int main() {
          test_select_pair_device_skips_prompt_with_explicit_device_id},
         {"select_pair_device_rejects_unconnectable_endpoint",
          test_select_pair_device_rejects_unconnectable_endpoint},
-        {"select_command_run", test_select_command_run},
-        {"select_command_pair", test_select_command_pair},
-        {"select_command_rejects_invalid_input", test_select_command_rejects_invalid_input},
+        {"select_action_serve_backup", test_select_action_serve_backup},
+        {"select_action_restore_backup", test_select_action_restore_backup},
+        {"select_action_rejects_invalid_input", test_select_action_rejects_invalid_input},
     };
 
     int passed_count = 0;

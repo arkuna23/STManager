@@ -532,7 +532,7 @@ Status Manager::resolve_pair_target(
         "Device not found via discovery. Set --host/--port explicitly.");
 }
 
-Status Manager::run_sync(const RunSyncOptions& options, RunSyncResult* result) const {
+Status Manager::serve_sync(const ServeSyncOptions& options, ServeSyncResult* result) const {
     if (result == NULL) {
         return Status(StatusCode::kSyncProtocolError, "result output cannot be null");
     }
@@ -549,7 +549,7 @@ Status Manager::run_sync(const RunSyncOptions& options, RunSyncResult* result) c
     }
 
     int bound_port = 0;
-    const Status run_status = run_sync_server(
+    const Status run_status = serve_sync_server(
         data_manager_,
         local_device_id_,
         &trusted_store,
@@ -615,6 +615,63 @@ Status Manager::pair_sync(
     result->selected_device = device_info;
     result->paired_this_time = paired_this_time;
     return Status::ok_status();
+}
+
+Status Manager::export_backup(const ExportBackupOptions& options, ExportBackupResult* result) const {
+    if (result == NULL) {
+        return Status(StatusCode::kSyncProtocolError, "result output cannot be null");
+    }
+
+    const Status initialized_status = ensure_initialized();
+    if (!initialized_status.ok()) {
+        return initialized_status;
+    }
+
+    if (options.file_path.empty()) {
+        return Status(StatusCode::kSyncProtocolError, "backup export file_path cannot be empty");
+    }
+
+    std::ofstream out_file(options.file_path.c_str(), std::ios::binary | std::ios::trunc);
+    if (!out_file.is_open()) {
+        return Status(StatusCode::kIoError, "Failed opening backup export file for write");
+    }
+
+    const Status backup_status = data_manager_.backup(out_file, options.backup_options);
+    if (!backup_status.ok()) {
+        return backup_status;
+    }
+
+    out_file.flush();
+    if (!out_file) {
+        return Status(StatusCode::kIoError, "Failed writing backup export file");
+    }
+
+    const std::streampos end_position = out_file.tellp();
+    if (end_position < 0) {
+        return Status(StatusCode::kIoError, "Failed determining backup export size");
+    }
+
+    result->file_path = options.file_path;
+    result->bytes_written = static_cast<uint64_t>(end_position);
+    return Status::ok_status();
+}
+
+Status Manager::restore_backup(const RestoreBackupOptions& options) const {
+    const Status initialized_status = ensure_initialized();
+    if (!initialized_status.ok()) {
+        return initialized_status;
+    }
+
+    if (options.file_path.empty()) {
+        return Status(StatusCode::kSyncProtocolError, "backup restore file_path cannot be empty");
+    }
+
+    std::ifstream in_file(options.file_path.c_str(), std::ios::binary);
+    if (!in_file.is_open()) {
+        return Status(StatusCode::kIoError, "Failed opening backup file for read");
+    }
+
+    return data_manager_.restore(in_file, data_manager_.root_path);
 }
 
 }  // namespace STManager

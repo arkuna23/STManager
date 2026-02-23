@@ -8,7 +8,7 @@
 
 namespace STManagerCli {
 
-bool select_command(
+bool select_action(
     std::istream& input_stream,
     std::ostream& output_stream,
     std::string* error_message,

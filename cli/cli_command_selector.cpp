@@ -17,7 +17,7 @@ bool parse_selection(const std::string& input, int* selected_value) {
     if (end_ptr == input.c_str() || *end_ptr != '\0') {
         return false;
     }
-    if (parsed_value < 1 || parsed_value > 2) {
+    if (parsed_value < 1 || parsed_value > 4) {
         return false;
     }
 
@@ -27,7 +27,7 @@ bool parse_selection(const std::string& input, int* selected_value) {
 
 }  // namespace
 
-bool select_command(
+bool select_action(
     std::istream& input_stream,
     std::ostream& output_stream,
     std::string* error_message,
@@ -36,24 +36,35 @@ bool select_command(
         return false;
     }
 
-    output_stream << "Select command:\n";
-    output_stream << "  [1] run\n";
-    output_stream << "  [2] pair\n";
-    output_stream << "Enter selection [1-2]: ";
+    output_stream << "Select action:\n";
+    output_stream << "  [1] serve backup\n";
+    output_stream << "  [2] pair restore\n";
+    output_stream << "  [3] export backup\n";
+    output_stream << "  [4] restore backup\n";
+    output_stream << "Select action [1-4]: ";
 
     std::string input;
     if (!std::getline(input_stream, input)) {
-        *error_message = "Failed to read command selection from input.";
+        *error_message = "Failed to read action selection from input.";
         return false;
     }
 
     int selected_value = 0;
     if (!parse_selection(input, &selected_value)) {
-        *error_message = "Invalid command selection. Please enter 1 or 2.";
+        *error_message = "Invalid action selection. Please enter 1 to 4.";
         return false;
     }
 
-    *command_type = (selected_value == 1) ? CommandType::kRun : CommandType::kPair;
+    if (selected_value == 1) {
+        *command_type = CommandType::kServeBackup;
+    } else if (selected_value == 2) {
+        *command_type = CommandType::kPairRestore;
+    } else if (selected_value == 3) {
+        *command_type = CommandType::kExportBackup;
+    } else {
+        *command_type = CommandType::kRestoreBackup;
+    }
+
     return true;
 }
 
