@@ -3,8 +3,12 @@ cmake_minimum_required(VERSION 3.12)
 project(STManager VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 
-add_library(STManager SHARED
+option(STMANAGER_CLI_STATIC_LINK "Build stmanager CLI with static linking" ON)
+option(STMANAGER_CLI_SIZE_OPTIMIZED_RELEASE "Optimize stmanager size in Release builds" ON)
+
+set(STMANAGER_SOURCES
     src/archive_stream.cpp
     src/data.cpp
     src/discovery_mdns.cpp
@@ -18,18 +22,30 @@ add_library(STManager SHARED
     src/trusted_device_store.cpp
 )
 
+add_library(STManager SHARED
+    ${STMANAGER_SOURCES}
+)
+
+add_library(STManagerStatic STATIC
+    ${STMANAGER_SOURCES}
+)
+
 find_package(LibArchive REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Threads REQUIRED)
 
 if(TARGET LibArchive::LibArchive)
     target_link_libraries(STManager PRIVATE LibArchive::LibArchive)
+    target_link_libraries(STManagerStatic PRIVATE LibArchive::LibArchive)
 else()
     target_include_directories(STManager PRIVATE ${LibArchive_INCLUDE_DIRS})
+    target_include_directories(STManagerStatic PRIVATE ${LibArchive_INCLUDE_DIRS})
     target_link_libraries(STManager PRIVATE ${LibArchive_LIBRARIES})
+    target_link_libraries(STManagerStatic PRIVATE ${LibArchive_LIBRARIES})
 endif()
 
 target_link_libraries(STManager PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(STManagerStatic PRIVATE nlohmann_json::nlohmann_json)
 
 include(GenerateExportHeader)
 
@@ -50,8 +66,15 @@ target_include_directories(STManager
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
         $<INSTALL_INTERFACE:include>
 )
+target_include_directories(STManagerStatic
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
+        $<INSTALL_INTERFACE:include>
+)
 
 target_compile_features(STManager PUBLIC cxx_std_11)
+target_compile_features(STManagerStatic PUBLIC cxx_std_11)
 
 add_executable(stmanager
     cli/cli_args.cpp
@@ -59,9 +82,40 @@ add_executable(stmanager
     cli/main.cpp
 )
 
-target_link_libraries(stmanager PRIVATE STManager)
+set(STMANAGER_CLI_STATIC_LINK_ACTIVE OFF)
+if(STMANAGER_CLI_STATIC_LINK AND CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(STMANAGER_CLI_STATIC_LINK_ACTIVE ON)
+endif()
+
+if(STMANAGER_CLI_STATIC_LINK_ACTIVE)
+    target_link_libraries(stmanager PRIVATE STManagerStatic)
+else()
+    target_link_libraries(stmanager PRIVATE STManager)
+endif()
 target_compile_features(stmanager PRIVATE cxx_std_11)
 target_include_directories(stmanager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli)
+
+if(STMANAGER_CLI_STATIC_LINK_ACTIVE AND UNIX AND NOT APPLE)
+    target_link_options(stmanager PRIVATE
+        $<$<CONFIG:Release>:-static>
+        $<$<CONFIG:Release>:-static-libgcc>
+        $<$<CONFIG:Release>:-static-libstdc++>
+    )
+endif()
+
+if(STMANAGER_CLI_SIZE_OPTIMIZED_RELEASE)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(stmanager PRIVATE
+            $<$<CONFIG:Release>:-Os>
+            $<$<CONFIG:Release>:-ffunction-sections>
+            $<$<CONFIG:Release>:-fdata-sections>
+        )
+        target_link_options(stmanager PRIVATE
+            $<$<CONFIG:Release>:-Wl,--gc-sections>
+            $<$<CONFIG:Release>:-Wl,--strip-all>
+        )
+    endif()
+endif()
 
 enable_testing()
 

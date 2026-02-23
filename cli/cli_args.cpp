@@ -159,6 +159,9 @@ std::string build_help_text() {
            "[--pairing-code <code>] [--advertise true|false]\n";
     out << "  stmanager pair [--root <path>] [--host <ip>] [--port <port>] --device-id <id> "
            "[--pairing-code <code>] [--dest-root <path>] [--git-mode]\n";
+    out << "\nDefaults:\n";
+    out << "  run --port defaults to " << kDefaultSyncPort << "\n";
+    out << "  pair with --host but no --port uses " << kDefaultSyncPort << "\n";
     return out.str();
 }
 

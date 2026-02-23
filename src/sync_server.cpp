@@ -1,18 +1,19 @@
 #include <STManager/sync.h>
 
+#include "discovery_mdns.h"
+
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
-#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <sstream>
@@ -28,16 +29,75 @@ void handle_sigint(int) {
 
 class SignalScope {
 public:
-    SignalScope() : previous_handler_(signal(SIGINT, handle_sigint)) {
+    SignalScope() : has_previous_(false) {
         g_stop_server = 0;
+
+        struct sigaction action;
+        std::memset(&action, 0, sizeof(action));
+        action.sa_handler = handle_sigint;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = 0;
+
+        if (sigaction(SIGINT, &action, &previous_action_) == 0) {
+            has_previous_ = true;
+        }
     }
 
     ~SignalScope() {
-        signal(SIGINT, previous_handler_);
+        if (has_previous_) {
+            sigaction(SIGINT, &previous_action_, NULL);
+        }
     }
 
 private:
-    void (*previous_handler_)(int);
+    struct sigaction previous_action_;
+    bool has_previous_;
+};
+
+class DiscoveryResponderScope {
+public:
+    DiscoveryResponderScope() : started_(false) {}
+
+    Status start(
+        const std::string& local_device_id,
+        const std::string& local_device_name,
+        const std::string& local_bind_host,
+        int local_port) {
+        if (started_) {
+            return Status::ok_status();
+        }
+
+        DeviceInfo local_device;
+        local_device.device_id = local_device_id;
+        local_device.device_name = local_device_name;
+        local_device.host = local_bind_host;
+        local_device.port = local_port;
+
+        const Status start_status = internal::start_discovery_responder(local_device);
+        if (!start_status.ok()) {
+            return start_status;
+        }
+
+        started_ = true;
+        return Status::ok_status();
+    }
+
+    Status stop() {
+        if (!started_) {
+            return Status::ok_status();
+        }
+
+        const Status stop_status = internal::stop_discovery_responder();
+        started_ = false;
+        return stop_status;
+    }
+
+    ~DiscoveryResponderScope() {
+        stop();
+    }
+
+private:
+    bool started_;
 };
 
 Status make_io_error(const std::string& prefix) {
@@ -205,62 +265,6 @@ Status send_json_response(int socket_fd, const std::string& message_type, bool o
     }
     return send_framed_string(socket_fd, response_json.dump());
 }
-
-class AdvertiseProcess {
-public:
-    AdvertiseProcess() : child_pid_(-1) {}
-
-    Status start(const std::string& name, int port, const std::string& device_id) {
-        if (child_pid_ > 0) {
-            return Status::ok_status();
-        }
-
-        const pid_t child_pid = fork();
-        if (child_pid < 0) {
-            return make_io_error("fork failed for avahi publish");
-        }
-
-        if (child_pid == 0) {
-            const std::string port_string = to_string(port);
-            const std::string txt_value = std::string("id=") + device_id;
-            execlp(
-                "avahi-publish-service",
-                "avahi-publish-service",
-                name.c_str(),
-                "_stmanager-sync._tcp",
-                port_string.c_str(),
-                txt_value.c_str(),
-                static_cast<char*>(NULL));
-            _exit(127);
-        }
-
-        child_pid_ = child_pid;
-        return Status::ok_status();
-    }
-
-    void stop() {
-        if (child_pid_ <= 0) {
-            return;
-        }
-
-        kill(child_pid_, SIGTERM);
-        waitpid(child_pid_, NULL, 0);
-        child_pid_ = -1;
-    }
-
-    ~AdvertiseProcess() {
-        stop();
-    }
-
-private:
-    std::string to_string(int value) {
-        std::ostringstream out;
-        out << value;
-        return out.str();
-    }
-
-    pid_t child_pid_;
-};
 
 Status handle_pair_request(
     int client_fd,
@@ -475,16 +479,41 @@ Status run_sync_server(
     }
     *bound_port = actual_port;
 
-    AdvertiseProcess advertise_process;
+    DiscoveryResponderScope discovery_responder_scope;
     if (options.advertise) {
         const std::string advertise_name = options.advertise_name.empty()
             ? local_device_id
             : options.advertise_name;
-        advertise_process.start(advertise_name, actual_port, local_device_id);
+        const Status discovery_start_status = discovery_responder_scope.start(
+            local_device_id,
+            advertise_name,
+            options.bind_host,
+            actual_port);
+        if (!discovery_start_status.ok()) {
+            close(listen_fd);
+            return discovery_start_status;
+        }
     }
 
     SignalScope signal_scope;
     while (!g_stop_server) {
+        struct pollfd poll_fd;
+        poll_fd.fd = listen_fd;
+        poll_fd.events = POLLIN;
+        poll_fd.revents = 0;
+
+        const int poll_result = poll(&poll_fd, 1, 500);
+        if (poll_result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(listen_fd);
+            return make_io_error("poll failed");
+        }
+        if (poll_result == 0) {
+            continue;
+        }
+
         struct sockaddr_storage client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
         const int client_fd = accept(
@@ -498,20 +527,20 @@ Status run_sync_server(
             if (errno == EINTR) {
                 continue;
             }
-            close(listen_fd);
-            return make_io_error("accept failed");
+            continue;
         }
 
         const Status handle_status =
             handle_client_connection(client_fd, data_manager, trusted_store, options);
         close(client_fd);
-        if (!handle_status.ok()) {
-            close(listen_fd);
-            return handle_status;
-        }
+        (void)handle_status;
     }
 
+    const Status discovery_stop_status = discovery_responder_scope.stop();
     close(listen_fd);
+    if (!discovery_stop_status.ok()) {
+        return discovery_stop_status;
+    }
     return Status::ok_status();
 }
 

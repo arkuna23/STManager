@@ -5,6 +5,8 @@
 
 namespace STManagerCli {
 
+const int kDefaultSyncPort = 38591;
+
 enum class CommandType {
     kUnknown = 0,
     kRun,
@@ -18,7 +20,12 @@ struct RunArgs {
     std::string pairing_code;
     bool advertise;
 
-    RunArgs() : root_path(), bind_host("0.0.0.0"), port(0), pairing_code(), advertise(true) {}
+    RunArgs()
+        : root_path(),
+          bind_host("0.0.0.0"),
+          port(kDefaultSyncPort),
+          pairing_code(),
+          advertise(true) {}
 };
 
 struct PairArgs {

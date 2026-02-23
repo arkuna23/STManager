@@ -31,11 +31,22 @@ bool resolve_remote_device(
     resolved_device.host = pair_args.host;
     resolved_device.port = pair_args.port;
 
-    if (resolved_device.host.empty() || resolved_device.port <= 0) {
+    if (!resolved_device.host.empty() && resolved_device.port <= 0) {
+        resolved_device.port = STManagerCli::kDefaultSyncPort;
+    }
+
+    if (resolved_device.host.empty() && resolved_device.port > 0) {
+        *error_message = "--host is required when --port is provided";
+        return false;
+    }
+
+    if (resolved_device.host.empty()) {
         std::vector<STManager::DeviceInfo> discovered_devices;
         const STManager::Status discover_status = sync_manager->discover_devices(&discovered_devices);
         if (!discover_status.ok()) {
-            *error_message = "Unable to discover device automatically: " + discover_status.message;
+            *error_message =
+                "Unable to discover device automatically: " + discover_status.message +
+                ". Use --host and optional --port to bypass auto-discovery.";
             return false;
         }
 
@@ -99,6 +110,10 @@ int run_command(const STManagerCli::RunArgs& args) {
     server_options.pairing_code = args.pairing_code;
     server_options.advertise = args.advertise;
     server_options.advertise_name = local_device_id;
+
+    std::cout << "Starting sync server on " << server_options.bind_host
+              << ":" << server_options.port
+              << " (device_id=" << local_device_id << ")\n";
 
     int bound_port = 0;
     const STManager::Status run_status = STManager::run_sync_server(

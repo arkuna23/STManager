@@ -79,7 +79,7 @@ bool test_parse_run_defaults() {
     EXPECT_TRUE(context, STManagerCli::parse_cli_args(2, argv, &parsed_args, &error_message));
     EXPECT_EQ(context, static_cast<int>(parsed_args.command_type), static_cast<int>(STManagerCli::CommandType::kRun));
     EXPECT_EQ(context, parsed_args.run_args.bind_host, std::string("0.0.0.0"));
-    EXPECT_EQ(context, parsed_args.run_args.port, 0);
+    EXPECT_EQ(context, parsed_args.run_args.port, STManagerCli::kDefaultSyncPort);
     EXPECT_TRUE(context, parsed_args.run_args.advertise);
 
     return context.failed_assertions == 0;
