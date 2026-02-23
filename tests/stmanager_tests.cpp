@@ -1,9 +1,5 @@
 #include <STManager/data.h>
 #include <STManager/sync.h>
-
-#include "../src/archive_stream.h"
-#include "test_helpers.h"
-
 #include <archive.h>
 #include <archive_entry.h>
 
@@ -15,6 +11,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include "../src/archive_stream.h"
+#include "test_helpers.h"
 
 using STManager::BackupOptions;
 using STManager::DataManager;
@@ -37,35 +36,35 @@ struct TestContext {
     TestContext() : failed_assertions(0) {}
 };
 
-#define EXPECT_TRUE(ctx, expr)                                                                    \
-    do {                                                                                           \
-        if (!(expr)) {                                                                             \
+#define EXPECT_TRUE(ctx, expr)                                                               \
+    do {                                                                                     \
+        if (!(expr)) {                                                                       \
             std::cerr << "Assertion failed at " << __FILE__ << ":" << __LINE__ << ": " #expr \
-                      << "\n";                                                                   \
+                      << "\n";                                                               \
+            ++(ctx).failed_assertions;                                                       \
+        }                                                                                    \
+    } while (0)
+
+#define EXPECT_EQ(ctx, lhs, rhs)                                                                   \
+    do {                                                                                           \
+        const auto _lhs_value = (lhs);                                                             \
+        const auto _rhs_value = (rhs);                                                             \
+        if (!(_lhs_value == _rhs_value)) {                                                         \
+            std::cerr << "Assertion failed at " << __FILE__ << ":" << __LINE__ << ": " #lhs        \
+                      << " == " #rhs << " (actual: " << _lhs_value << ", expected: " << _rhs_value \
+                      << ")\n";                                                                    \
             ++(ctx).failed_assertions;                                                             \
         }                                                                                          \
     } while (0)
 
-#define EXPECT_EQ(ctx, lhs, rhs)                                                                    \
-    do {                                                                                             \
-        const auto _lhs_value = (lhs);                                                              \
-        const auto _rhs_value = (rhs);                                                              \
-        if (!(_lhs_value == _rhs_value)) {                                                          \
-            std::cerr << "Assertion failed at " << __FILE__ << ":" << __LINE__ << ": " #lhs   \
-                      << " == " #rhs << " (actual: " << _lhs_value << ", expected: "          \
-                      << _rhs_value << ")\n";                                                     \
-            ++(ctx).failed_assertions;                                                               \
-        }                                                                                            \
-    } while (0)
-
-#define EXPECT_STATUS_OK(ctx, status_expr)                                              \
-    do {                                                                                 \
-        const Status _status_value = (status_expr);                                      \
-        if (!_status_value.ok()) {                                                       \
+#define EXPECT_STATUS_OK(ctx, status_expr)                                           \
+    do {                                                                             \
+        const Status _status_value = (status_expr);                                  \
+        if (!_status_value.ok()) {                                                   \
             std::cerr << "Status failed at " << __FILE__ << ":" << __LINE__ << " : " \
-                      << _status_value.message << "\n";                                \
-            ++(ctx).failed_assertions;                                                   \
-        }                                                                                \
+                      << _status_value.message << "\n";                              \
+            ++(ctx).failed_assertions;                                               \
+        }                                                                            \
     } while (0)
 
 struct TempDirGuard {
@@ -130,7 +129,8 @@ public:
     }
 
     Status receive_stream(std::ostream& out) override {
-        out.write(incoming_stream_data.data(), static_cast<std::streamsize>(incoming_stream_data.size()));
+        out.write(incoming_stream_data.data(),
+                  static_cast<std::streamsize>(incoming_stream_data.size()));
         if (!out) {
             return Status(StatusCode::kIoError, "Failed writing fake incoming stream");
         }
@@ -198,7 +198,8 @@ public:
 };
 
 std::string create_malicious_archive_file() {
-    const std::string temp_dir = STManagerTest::create_temp_directory("stmanager-malicious-archive");
+    const std::string temp_dir =
+        STManagerTest::create_temp_directory("stmanager-malicious-archive");
     if (temp_dir.empty()) {
         return std::string();
     }
@@ -299,8 +300,7 @@ std::string create_valid_archive_bytes(const std::vector<ArchiveFileEntry>& file
 
     std::set<std::string> created_directories;
     for (std::vector<ArchiveFileEntry>::const_iterator it = file_entries.begin();
-         it != file_entries.end();
-         ++it) {
+         it != file_entries.end(); ++it) {
         const std::vector<std::string> segments = split_path_segments(it->path);
         std::string current_directory;
         for (std::vector<std::string>::size_type index = 0; index + 1 < segments.size(); ++index) {
@@ -354,10 +354,8 @@ bool test_locate_success_with_required_dirs() {
     const DataManager manager = DataManager::locate(fixture_root);
     EXPECT_TRUE(context, manager.is_valid());
     EXPECT_EQ(context, manager.root_path, fixture_root);
-    EXPECT_EQ(
-        context,
-        manager.extensions_path,
-        STManagerTest::join_path(fixture_root, "public/scripts/extensions"));
+    EXPECT_EQ(context, manager.extensions_path,
+              STManagerTest::join_path(fixture_root, "public/scripts/extensions"));
     EXPECT_EQ(context, manager.data_path, STManagerTest::join_path(fixture_root, "data"));
 
     return context.failed_assertions == 0;
@@ -366,15 +364,17 @@ bool test_locate_success_with_required_dirs() {
 bool test_locate_missing_extensions_fails() {
     TestContext context;
 
-    const std::string fixture_root = STManagerTest::create_sillytavern_fixture("locate-missing-ext");
+    const std::string fixture_root =
+        STManagerTest::create_sillytavern_fixture("locate-missing-ext");
     TempDirGuard fixture_guard(fixture_root);
 
     EXPECT_TRUE(context, STManagerTest::remove_directory_recursive(
-        STManagerTest::join_path(fixture_root, "public/scripts/extensions")));
+                             STManagerTest::join_path(fixture_root, "public/scripts/extensions")));
 
     const DataManager manager = DataManager::locate(fixture_root);
     EXPECT_TRUE(context, !manager.is_valid());
-    EXPECT_EQ(context, static_cast<int>(manager.last_status().code), static_cast<int>(StatusCode::kMissingExtensionsDir));
+    EXPECT_EQ(context, static_cast<int>(manager.last_status().code),
+              static_cast<int>(StatusCode::kMissingExtensionsDir));
 
     return context.failed_assertions == 0;
 }
@@ -382,15 +382,17 @@ bool test_locate_missing_extensions_fails() {
 bool test_locate_missing_data_fails() {
     TestContext context;
 
-    const std::string fixture_root = STManagerTest::create_sillytavern_fixture("locate-missing-data");
+    const std::string fixture_root =
+        STManagerTest::create_sillytavern_fixture("locate-missing-data");
     TempDirGuard fixture_guard(fixture_root);
 
     EXPECT_TRUE(context, STManagerTest::remove_directory_recursive(
-        STManagerTest::join_path(fixture_root, "data")));
+                             STManagerTest::join_path(fixture_root, "data")));
 
     const DataManager manager = DataManager::locate(fixture_root);
     EXPECT_TRUE(context, !manager.is_valid());
-    EXPECT_EQ(context, static_cast<int>(manager.last_status().code), static_cast<int>(StatusCode::kMissingDataDir));
+    EXPECT_EQ(context, static_cast<int>(manager.last_status().code),
+              static_cast<int>(StatusCode::kMissingDataDir));
 
     return context.failed_assertions == 0;
 }
@@ -398,24 +400,29 @@ bool test_locate_missing_data_fails() {
 bool test_backup_restore_roundtrip_data_and_extensions() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture("backup-roundtrip-src");
-    const std::string restore_root = STManagerTest::create_temp_directory("backup-roundtrip-dst");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("backup-roundtrip-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("backup-roundtrip-dst");
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
 
     EXPECT_TRUE(context, !source_root.empty());
     EXPECT_TRUE(context, !restore_root.empty());
 
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(source_root, "data/config.json"),
+                                          "{\"name\":\"demo\"}"));
     EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "data/config.json"), "{\"name\":\"demo\"}"));
-    EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-a/index.js"),
-        "module.exports={};"));
+                             STManagerTest::join_path(source_root,
+                                                      "public/scripts/extensions/ext-a/index.js"),
+                             "module.exports={};"));
 
     const DataManager source_manager = DataManager::locate(source_root);
     EXPECT_TRUE(context, source_manager.is_valid());
 
-    const std::string backup_archive_path = STManagerTest::join_path(source_root, "roundtrip.tar.zst");
+    const std::string backup_archive_path =
+        STManagerTest::join_path(source_root, "roundtrip.tar.zst");
     {
         std::ofstream archive_out(backup_archive_path.c_str(), std::ios::binary | std::ios::trunc);
         EXPECT_TRUE(context, archive_out.is_open());
@@ -423,17 +430,16 @@ bool test_backup_restore_roundtrip_data_and_extensions() {
     }
     EXPECT_TRUE(context, STManagerTest::read_file(backup_archive_path).size() > 0);
 
-    const std::string restore_archive_bytes = create_valid_archive_bytes(
-        std::vector<ArchiveFileEntry>{
+    const std::string restore_archive_bytes =
+        create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
             {"data/config.json", "{\"name\":\"demo\"}"},
             {"extensions/ext-a/index.js", "module.exports={};"},
         });
     EXPECT_TRUE(context, !restore_archive_bytes.empty());
 
     std::stringstream restore_stream(std::ios::in | std::ios::out | std::ios::binary);
-    restore_stream.write(
-        restore_archive_bytes.data(),
-        static_cast<std::streamsize>(restore_archive_bytes.size()));
+    restore_stream.write(restore_archive_bytes.data(),
+                         static_cast<std::streamsize>(restore_archive_bytes.size()));
     restore_stream.clear();
     restore_stream.seekg(0, std::ios::beg);
     EXPECT_STATUS_OK(context, source_manager.restore(restore_stream, restore_root));
@@ -442,7 +448,8 @@ bool test_backup_restore_roundtrip_data_and_extensions() {
               STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/config.json")),
               "{\"name\":\"demo\"}");
     EXPECT_EQ(context,
-              STManagerTest::read_file(STManagerTest::join_path(restore_root, "extensions/ext-a/index.js")),
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/ext-a/index.js")),
               "module.exports={};");
 
     return context.failed_assertions == 0;
@@ -457,14 +464,17 @@ bool test_backup_git_mode_skips_git_extensions_and_writes_manifest() {
     TempDirGuard restore_guard(restore_root);
 
     EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-git/.git/config"),
-        "[remote \"origin\"]\n    url = https://example.com/ext-git.git\n"));
+                             STManagerTest::join_path(
+                                 source_root, "public/scripts/extensions/ext-git/.git/config"),
+                             "[remote \"origin\"]\n    url = https://example.com/ext-git.git\n"));
     EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-git/main.js"),
-        "git content"));
+                             STManagerTest::join_path(source_root,
+                                                      "public/scripts/extensions/ext-git/main.js"),
+                             "git content"));
     EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-normal/main.js"),
-        "normal content"));
+                             STManagerTest::join_path(
+                                 source_root, "public/scripts/extensions/ext-normal/main.js"),
+                             "normal content"));
 
     const DataManager manager = DataManager::locate(source_root);
     EXPECT_TRUE(context, manager.is_valid());
@@ -491,11 +501,12 @@ bool test_backup_archive_stream_validates_successfully() {
     TempDirGuard source_guard(source_root);
 
     EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "data/worlds/settings.json"),
-        "{\"mode\":\"single\"}"));
+                             STManagerTest::join_path(source_root, "data/worlds/settings.json"),
+                             "{\"mode\":\"single\"}"));
     EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-validate/main.js"),
-        "module.exports = true;"));
+                             STManagerTest::join_path(
+                                 source_root, "public/scripts/extensions/ext-validate/main.js"),
+                             "module.exports = true;"));
 
     const DataManager manager = DataManager::locate(source_root);
     EXPECT_TRUE(context, manager.is_valid());
@@ -513,19 +524,23 @@ bool test_backup_archive_stream_validates_successfully() {
 bool test_backup_archive_with_nested_directories_validates_successfully() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture("backup-validate-nested");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("backup-validate-nested");
     TempDirGuard source_guard(source_root);
 
-    EXPECT_TRUE(context, STManagerTest::create_directories(
-        STManagerTest::join_path(source_root, "data/worlds/campaign/chapter1")));
-    EXPECT_TRUE(context, STManagerTest::create_directories(
-        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-deep/assets/icons")));
+    EXPECT_TRUE(context, STManagerTest::create_directories(STManagerTest::join_path(
+                             source_root, "data/worlds/campaign/chapter1")));
+    EXPECT_TRUE(context, STManagerTest::create_directories(STManagerTest::join_path(
+                             source_root, "public/scripts/extensions/ext-deep/assets/icons")));
     EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "data/worlds/campaign/chapter1/state.json"),
-        "{\"chapter\":1}"));
-    EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-deep/assets/icons/readme.txt"),
-        "nested asset"));
+                             STManagerTest::join_path(source_root,
+                                                      "data/worlds/campaign/chapter1/state.json"),
+                             "{\"chapter\":1}"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(
+                        source_root, "public/scripts/extensions/ext-deep/assets/icons/readme.txt"),
+                    "nested asset"));
 
     const DataManager manager = DataManager::locate(source_root);
     EXPECT_TRUE(context, manager.is_valid());
@@ -543,7 +558,8 @@ bool test_backup_archive_with_nested_directories_validates_successfully() {
 bool test_restore_rejects_traversal_entry() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture("restore-traversal-src");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("restore-traversal-src");
     const std::string restore_root = STManagerTest::create_temp_directory("restore-traversal-dst");
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
@@ -561,7 +577,106 @@ bool test_restore_rejects_traversal_entry() {
 
     const Status restore_status = manager.restore(archive_stream, restore_root);
     EXPECT_TRUE(context, !restore_status.ok());
-    EXPECT_EQ(context, static_cast<int>(restore_status.code), static_cast<int>(StatusCode::kInvalidArchiveEntry));
+    EXPECT_EQ(context, static_cast<int>(restore_status.code),
+              static_cast<int>(StatusCode::kInvalidArchiveEntry));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_restore_full_replace_removes_stale_files() {
+    TestContext context;
+
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("restore-full-replace-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("restore-full-replace-dst");
+    TempDirGuard source_guard(source_root);
+    TempDirGuard restore_guard(restore_root);
+
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/stale.json"),
+                                          "{\"stale\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 restore_root, "public/scripts/extensions/stale-extension/main.js"),
+                             "stale"));
+
+    const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {"data/state.json", "{\"fresh\":true}"},
+        {"extensions/ext-a/index.js", "new extension"},
+    });
+    EXPECT_TRUE(context, !archive_bytes.empty());
+
+    const DataManager manager = DataManager::locate(source_root);
+    EXPECT_TRUE(context, manager.is_valid());
+
+    std::stringstream archive_stream(std::ios::in | std::ios::out | std::ios::binary);
+    archive_stream.write(archive_bytes.data(), static_cast<std::streamsize>(archive_bytes.size()));
+    archive_stream.clear();
+    archive_stream.seekg(0, std::ios::beg);
+    EXPECT_STATUS_OK(context, manager.restore(archive_stream, restore_root));
+
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/state.json")),
+              "{\"fresh\":true}");
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/ext-a/index.js")),
+              "new extension");
+    EXPECT_TRUE(context, !STManagerTest::path_exists(
+                             STManagerTest::join_path(restore_root, "data/stale.json")));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(
+                             restore_root, "public/scripts/extensions/stale-extension/main.js")));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_restore_to_sillytavern_layout_replaces_public_extensions() {
+    TestContext context;
+
+    const std::string source_root = STManagerTest::create_sillytavern_fixture("restore-layout-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("restore-layout-dst");
+    TempDirGuard source_guard(source_root);
+    TempDirGuard restore_guard(restore_root);
+
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/old.json"),
+                                          "{\"old\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(restore_root,
+                                                      "public/scripts/extensions/legacy/main.js"),
+                             "legacy"));
+
+    const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {"data/new.json", "{\"new\":true}"},
+        {"extensions/ext-fresh/main.js", "fresh extension"},
+    });
+    EXPECT_TRUE(context, !archive_bytes.empty());
+
+    const DataManager manager = DataManager::locate(source_root);
+    EXPECT_TRUE(context, manager.is_valid());
+
+    std::stringstream archive_stream(std::ios::in | std::ios::out | std::ios::binary);
+    archive_stream.write(archive_bytes.data(), static_cast<std::streamsize>(archive_bytes.size()));
+    archive_stream.clear();
+    archive_stream.seekg(0, std::ios::beg);
+    EXPECT_STATUS_OK(context, manager.restore(archive_stream, restore_root));
+
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/new.json")),
+              "{\"new\":true}");
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/ext-fresh/main.js")),
+              "fresh extension");
+
+    EXPECT_TRUE(context, !STManagerTest::path_exists(
+                             STManagerTest::join_path(restore_root, "data/old.json")));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(
+                             restore_root, "public/scripts/extensions/legacy/main.js")));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(
+                             restore_root, "extensions/ext-fresh/main.js")));
 
     return context.failed_assertions == 0;
 }
@@ -572,8 +687,8 @@ bool test_sync_push_requires_trusted_device() {
     const std::string root = STManagerTest::create_sillytavern_fixture("sync-push-untrusted");
     TempDirGuard root_guard(root);
 
-    EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(root, "data/state.json"), "{}"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(root, "data/state.json"), "{}"));
 
     const DataManager manager = DataManager::locate(root);
     FakeTransport transport;
@@ -591,7 +706,8 @@ bool test_sync_push_requires_trusted_device() {
     const SyncOptions options;
     const Status push_status = sync_manager.push_to_device(remote_device, options);
     EXPECT_TRUE(context, !push_status.ok());
-    EXPECT_EQ(context, static_cast<int>(push_status.code), static_cast<int>(StatusCode::kUnauthorized));
+    EXPECT_EQ(context, static_cast<int>(push_status.code),
+              static_cast<int>(StatusCode::kUnauthorized));
 
     return context.failed_assertions == 0;
 }
@@ -603,7 +719,7 @@ bool test_sync_pair_then_push_success() {
     TempDirGuard root_guard(root);
 
     EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(root, "data/state.json"), "{\"sync\":true}"));
+                             STManagerTest::join_path(root, "data/state.json"), "{\"sync\":true}"));
 
     const DataManager manager = DataManager::locate(root);
     FakeTransport transport;
@@ -641,19 +757,20 @@ bool test_sync_pull_restores_to_override_root() {
 
     const std::string source_root = STManagerTest::create_sillytavern_fixture("sync-pull-src");
     const std::string local_root = STManagerTest::create_sillytavern_fixture("sync-pull-local");
-    const std::string override_root = STManagerTest::create_temp_directory("sync-pull-override");
+    const std::string override_root =
+        STManagerTest::create_sillytavern_fixture("sync-pull-override");
     TempDirGuard source_guard(source_root);
     TempDirGuard local_guard(local_root);
     TempDirGuard override_guard(override_root);
 
-    EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(source_root, "data/history.json"), "pull payload"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(source_root, "data/history.json"), "pull payload"));
 
-    const DataManager source_manager = DataManager::locate(source_root);
-    const std::string backup_bytes = create_valid_archive_bytes(
-        std::vector<ArchiveFileEntry>{
-            {"data/history.json", "pull payload"},
-        });
+    const std::string backup_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {"data/history.json", "pull payload"},
+        {"extensions/ext-pull/main.js", "pull extension"},
+    });
     EXPECT_TRUE(context, !backup_bytes.empty());
 
     const DataManager local_manager = DataManager::locate(local_root);
@@ -677,9 +794,14 @@ bool test_sync_pull_restores_to_override_root() {
     options.destination_root_override = override_root;
 
     EXPECT_STATUS_OK(context, sync_manager.pull_from_device(remote_device, options));
+    EXPECT_EQ(
+        context,
+        STManagerTest::read_file(STManagerTest::join_path(override_root, "data/history.json")),
+        "pull payload");
     EXPECT_EQ(context,
-              STManagerTest::read_file(STManagerTest::join_path(override_root, "data/history.json")),
-              "pull payload");
+              STManagerTest::read_file(STManagerTest::join_path(
+                  override_root, "public/scripts/extensions/ext-pull/main.js")),
+              "pull extension");
 
     return context.failed_assertions == 0;
 }
@@ -726,11 +848,18 @@ int main() {
         {"locate_success_with_required_dirs", test_locate_success_with_required_dirs},
         {"locate_missing_extensions_fails", test_locate_missing_extensions_fails},
         {"locate_missing_data_fails", test_locate_missing_data_fails},
-        {"backup_restore_roundtrip_data_and_extensions", test_backup_restore_roundtrip_data_and_extensions},
-        {"backup_git_mode_skips_git_extensions_and_writes_manifest", test_backup_git_mode_skips_git_extensions_and_writes_manifest},
-        {"backup_archive_stream_validates_successfully", test_backup_archive_stream_validates_successfully},
-        {"backup_archive_with_nested_directories_validates_successfully", test_backup_archive_with_nested_directories_validates_successfully},
+        {"backup_restore_roundtrip_data_and_extensions",
+         test_backup_restore_roundtrip_data_and_extensions},
+        {"backup_git_mode_skips_git_extensions_and_writes_manifest",
+         test_backup_git_mode_skips_git_extensions_and_writes_manifest},
+        {"backup_archive_stream_validates_successfully",
+         test_backup_archive_stream_validates_successfully},
+        {"backup_archive_with_nested_directories_validates_successfully",
+         test_backup_archive_with_nested_directories_validates_successfully},
         {"restore_rejects_traversal_entry", test_restore_rejects_traversal_entry},
+        {"restore_full_replace_removes_stale_files", test_restore_full_replace_removes_stale_files},
+        {"restore_to_sillytavern_layout_replaces_public_extensions",
+         test_restore_to_sillytavern_layout_replaces_public_extensions},
         {"sync_push_requires_trusted_device", test_sync_push_requires_trusted_device},
         {"sync_pair_then_push_success", test_sync_pair_then_push_success},
         {"sync_pull_restores_to_override_root", test_sync_pull_restores_to_override_root},

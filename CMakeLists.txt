@@ -12,6 +12,7 @@ set(STMANAGER_SOURCES
     src/archive_stream.cpp
     src/data.cpp
     src/discovery_mdns.cpp
+    src/fs_ops.cpp
     src/git_manifest.cpp
     src/locate.cpp
     src/path_safety.cpp
