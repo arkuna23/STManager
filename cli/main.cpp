@@ -1,10 +1,10 @@
 #include <STManager/manager.h>
 
 #include "cli_args.h"
-#include "cli_net.h"
+#include "cli_command_selector.h"
+#include "cli_pair.h"
 #include "cli_state.h"
 
-#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -15,58 +15,65 @@ void print_status_error(const STManager::Status& status) {
     std::cerr << "Error: " << status.message << "\n";
 }
 
-bool parse_selection(const std::string& input, size_t max_count, size_t* selected_index) {
-    if (input.empty()) {
-        return false;
-    }
-
-    char* end_ptr = NULL;
-    const long parsed_value = std::strtol(input.c_str(), &end_ptr, 10);
-    if (end_ptr == input.c_str() || *end_ptr != '\0') {
-        return false;
-    }
-    if (parsed_value <= 0 || static_cast<size_t>(parsed_value) > max_count) {
-        return false;
-    }
-
-    *selected_index = static_cast<size_t>(parsed_value - 1);
-    return true;
+bool is_option_token(const std::string& token) {
+    return !token.empty() && token[0] == '-';
 }
 
-bool prompt_device_selection(
-    const std::vector<STManager::DeviceInfo>& discovered_devices,
-    STManager::DeviceInfo* selected_device,
+bool parse_with_selected_command(
+    int argc,
+    char** argv,
+    STManagerCli::CommandType selected_command_type,
+    STManagerCli::ParsedArgs* parsed_args,
     std::string* error_message) {
-    if (discovered_devices.empty()) {
-        *error_message = "No sync devices found in local network";
+    std::vector<std::string> reconstructed_args;
+    reconstructed_args.reserve(static_cast<size_t>(argc) + 1);
+    reconstructed_args.push_back("stmanager");
+    reconstructed_args.push_back(
+        selected_command_type == STManagerCli::CommandType::kRun ? "run" : "pair");
+
+    for (int index = 1; index < argc; ++index) {
+        reconstructed_args.push_back(argv[index]);
+    }
+
+    std::vector<char*> reconstructed_argv;
+    reconstructed_argv.reserve(reconstructed_args.size());
+    for (size_t index = 0; index < reconstructed_args.size(); ++index) {
+        reconstructed_argv.push_back(const_cast<char*>(reconstructed_args[index].c_str()));
+    }
+
+    return STManagerCli::parse_cli_args(
+        static_cast<int>(reconstructed_argv.size()),
+        reconstructed_argv.data(),
+        parsed_args,
+        error_message);
+}
+
+bool parse_or_select_cli_args(
+    int argc,
+    char** argv,
+    STManagerCli::ParsedArgs* parsed_args,
+    std::string* error_message) {
+    if (STManagerCli::parse_cli_args(argc, argv, parsed_args, error_message)) {
+        return true;
+    }
+
+    const bool has_missing_command = argc < 2;
+    const bool starts_with_option = argc >= 2 && is_option_token(argv[1]);
+    if (!has_missing_command && !starts_with_option) {
         return false;
     }
 
-    std::cout << "Discovered devices:\n";
-    for (size_t index = 0; index < discovered_devices.size(); ++index) {
-        const STManager::DeviceInfo& device = discovered_devices[index];
-        std::cout << "  [" << (index + 1) << "] "
-                  << device.device_name
-                  << " (id=" << device.device_id
-                  << ", " << device.host << ":" << device.port << ")\n";
-    }
-
-    std::cout << "Select device [1-" << discovered_devices.size() << "]: ";
-    std::string input;
-    if (!std::getline(std::cin, input)) {
-        *error_message =
-            "Failed to read device selection from input. Use --device-id in non-interactive mode.";
+    STManagerCli::CommandType selected_command_type = STManagerCli::CommandType::kUnknown;
+    if (!STManagerCli::select_command(std::cin, std::cout, error_message, &selected_command_type)) {
         return false;
     }
 
-    size_t selected_index = 0;
-    if (!parse_selection(input, discovered_devices.size(), &selected_index)) {
-        *error_message = "Invalid selection. Please rerun pair and choose a valid device index.";
-        return false;
-    }
-
-    *selected_device = discovered_devices[selected_index];
-    return true;
+    return parse_with_selected_command(
+        argc,
+        argv,
+        selected_command_type,
+        parsed_args,
+        error_message);
 }
 
 bool resolve_remote_device(
@@ -90,24 +97,14 @@ bool resolve_remote_device(
         return false;
     }
 
-    STManager::DeviceInfo resolved_device;
-    if (pair_args.device_id.empty() && candidates.size() > 1) {
-        if (!prompt_device_selection(candidates, &resolved_device, error_message)) {
-            return false;
-        }
-    } else {
-        resolved_device = auto_selected;
-    }
-
-    if (!STManagerCli::is_connectable_host(resolved_device.host) || resolved_device.port <= 0) {
-        *error_message =
-            "Discovered remote endpoint is not connectable. "
-            "Use --host <device_ip> and optional --port to connect directly.";
-        return false;
-    }
-
-    *device_info = resolved_device;
-    return true;
+    return STManagerCli::select_pair_device(
+        pair_args,
+        candidates,
+        auto_selected,
+        std::cin,
+        std::cout,
+        error_message,
+        device_info);
 }
 
 int run_command(const STManagerCli::RunArgs& args) {
@@ -196,7 +193,7 @@ int pair_command(const STManagerCli::PairArgs& args) {
 int main(int argc, char** argv) {
     STManagerCli::ParsedArgs parsed_args;
     std::string parse_error;
-    if (!STManagerCli::parse_cli_args(argc, argv, &parsed_args, &parse_error)) {
+    if (!parse_or_select_cli_args(argc, argv, &parsed_args, &parse_error)) {
         std::cerr << "Error: " << parse_error << "\n\n" << STManagerCli::build_help_text() << "\n";
         return 1;
     }

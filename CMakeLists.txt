@@ -121,7 +121,9 @@ endif()
 if(STMANAGER_BUILD_CLI)
     add_executable(stmanager
         cli/cli_args.cpp
+        cli/cli_command_selector.cpp
         cli/cli_net.cpp
+        cli/cli_pair.cpp
         cli/cli_state.cpp
         cli/main.cpp
     )
@@ -200,7 +202,9 @@ if(STMANAGER_BUILD_TESTS)
         tests/cli_tests.cpp
         tests/test_helpers.cpp
         cli/cli_args.cpp
+        cli/cli_command_selector.cpp
         cli/cli_net.cpp
+        cli/cli_pair.cpp
         cli/cli_state.cpp
     )
 

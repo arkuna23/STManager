@@ -3,7 +3,9 @@
 #include <STManager/manager.h>
 
 #include "cli_args.h"
+#include "cli_command_selector.h"
 #include "cli_net.h"
+#include "cli_pair.h"
 #include "cli_state.h"
 
 #include <unistd.h>
@@ -11,7 +13,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -152,6 +156,218 @@ bool test_is_connectable_host_rejects_wildcard() {
     return context.failed_assertions == 0;
 }
 
+bool test_select_pair_device_prompts_for_single_candidate() {
+    TestContext context;
+
+    STManagerCli::PairArgs pair_args;
+
+    STManager::DeviceInfo candidate;
+    candidate.device_id = "device-a";
+    candidate.device_name = "device-a";
+    candidate.host = "192.168.1.10";
+    candidate.port = 38591;
+
+    std::vector<STManager::DeviceInfo> candidates(1, candidate);
+    std::istringstream input_stream("1\n");
+    std::ostringstream output_stream;
+    std::string error_message;
+    STManager::DeviceInfo selected_device;
+
+    const bool selected = STManagerCli::select_pair_device(
+        pair_args,
+        candidates,
+        candidate,
+        input_stream,
+        output_stream,
+        &error_message,
+        &selected_device);
+
+    EXPECT_TRUE(context, selected);
+    EXPECT_TRUE(context, error_message.empty());
+    EXPECT_EQ(context, selected_device.device_id, std::string("device-a"));
+    EXPECT_TRUE(context, output_stream.str().find("Discovered devices:\n") != std::string::npos);
+    EXPECT_TRUE(context, output_stream.str().find("Select device [1-1]: ") != std::string::npos);
+
+    return context.failed_assertions == 0;
+}
+
+bool test_select_pair_device_rejects_invalid_selection() {
+    TestContext context;
+
+    STManagerCli::PairArgs pair_args;
+
+    STManager::DeviceInfo first_candidate;
+    first_candidate.device_id = "device-a";
+    first_candidate.device_name = "device-a";
+    first_candidate.host = "192.168.1.10";
+    first_candidate.port = 38591;
+
+    STManager::DeviceInfo second_candidate = first_candidate;
+    second_candidate.device_id = "device-b";
+    second_candidate.device_name = "device-b";
+    second_candidate.host = "192.168.1.11";
+
+    std::vector<STManager::DeviceInfo> candidates;
+    candidates.push_back(first_candidate);
+    candidates.push_back(second_candidate);
+
+    std::istringstream input_stream("9\n");
+    std::ostringstream output_stream;
+    std::string error_message;
+    STManager::DeviceInfo selected_device;
+
+    const bool selected = STManagerCli::select_pair_device(
+        pair_args,
+        candidates,
+        first_candidate,
+        input_stream,
+        output_stream,
+        &error_message,
+        &selected_device);
+
+    EXPECT_TRUE(context, !selected);
+    EXPECT_TRUE(
+        context,
+        error_message == "Invalid selection. Please rerun pair and choose a valid device index.");
+
+    return context.failed_assertions == 0;
+}
+
+bool test_select_pair_device_skips_prompt_with_explicit_device_id() {
+    TestContext context;
+
+    STManagerCli::PairArgs pair_args;
+    pair_args.device_id = "device-a";
+
+    STManager::DeviceInfo candidate;
+    candidate.device_id = "device-a";
+    candidate.device_name = "device-a";
+    candidate.host = "192.168.1.10";
+    candidate.port = 38591;
+
+    std::vector<STManager::DeviceInfo> candidates(1, candidate);
+    std::istringstream input_stream("");
+    std::ostringstream output_stream;
+    std::string error_message;
+    STManager::DeviceInfo selected_device;
+
+    const bool selected = STManagerCli::select_pair_device(
+        pair_args,
+        candidates,
+        candidate,
+        input_stream,
+        output_stream,
+        &error_message,
+        &selected_device);
+
+    EXPECT_TRUE(context, selected);
+    EXPECT_TRUE(context, error_message.empty());
+    EXPECT_EQ(context, selected_device.device_id, std::string("device-a"));
+    EXPECT_TRUE(context, output_stream.str().empty());
+
+    return context.failed_assertions == 0;
+}
+
+bool test_select_pair_device_rejects_unconnectable_endpoint() {
+    TestContext context;
+
+    STManagerCli::PairArgs pair_args;
+
+    STManager::DeviceInfo candidate;
+    candidate.device_id = "device-a";
+    candidate.device_name = "device-a";
+    candidate.host = "0.0.0.0";
+    candidate.port = 38591;
+
+    std::vector<STManager::DeviceInfo> candidates(1, candidate);
+    std::istringstream input_stream("1\n");
+    std::ostringstream output_stream;
+    std::string error_message;
+    STManager::DeviceInfo selected_device;
+
+    const bool selected = STManagerCli::select_pair_device(
+        pair_args,
+        candidates,
+        candidate,
+        input_stream,
+        output_stream,
+        &error_message,
+        &selected_device);
+
+    EXPECT_TRUE(context, !selected);
+    EXPECT_TRUE(
+        context,
+        error_message == "Discovered remote endpoint is not connectable. "
+                         "Use --host <device_ip> and optional --port to connect directly.");
+
+    return context.failed_assertions == 0;
+}
+
+bool test_select_command_run() {
+    TestContext context;
+
+    std::istringstream input_stream("1\n");
+    std::ostringstream output_stream;
+    std::string error_message;
+    STManagerCli::CommandType command_type = STManagerCli::CommandType::kUnknown;
+
+    const bool selected = STManagerCli::select_command(
+        input_stream,
+        output_stream,
+        &error_message,
+        &command_type);
+
+    EXPECT_TRUE(context, selected);
+    EXPECT_TRUE(context, error_message.empty());
+    EXPECT_EQ(context, static_cast<int>(command_type), static_cast<int>(STManagerCli::CommandType::kRun));
+    EXPECT_TRUE(context, output_stream.str().find("Select command:\n") != std::string::npos);
+    EXPECT_TRUE(context, output_stream.str().find("Enter selection [1-2]: ") != std::string::npos);
+
+    return context.failed_assertions == 0;
+}
+
+bool test_select_command_pair() {
+    TestContext context;
+
+    std::istringstream input_stream("2\n");
+    std::ostringstream output_stream;
+    std::string error_message;
+    STManagerCli::CommandType command_type = STManagerCli::CommandType::kUnknown;
+
+    const bool selected = STManagerCli::select_command(
+        input_stream,
+        output_stream,
+        &error_message,
+        &command_type);
+
+    EXPECT_TRUE(context, selected);
+    EXPECT_TRUE(context, error_message.empty());
+    EXPECT_EQ(context, static_cast<int>(command_type), static_cast<int>(STManagerCli::CommandType::kPair));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_select_command_rejects_invalid_input() {
+    TestContext context;
+
+    std::istringstream input_stream("x\n");
+    std::ostringstream output_stream;
+    std::string error_message;
+    STManagerCli::CommandType command_type = STManagerCli::CommandType::kUnknown;
+
+    const bool selected = STManagerCli::select_command(
+        input_stream,
+        output_stream,
+        &error_message,
+        &command_type);
+
+    EXPECT_TRUE(context, !selected);
+    EXPECT_TRUE(context, error_message == "Invalid command selection. Please enter 1 or 2.");
+    EXPECT_EQ(context, static_cast<int>(command_type), static_cast<int>(STManagerCli::CommandType::kUnknown));
+
+    return context.failed_assertions == 0;
+}
+
 struct TestCase {
     const char* name;
     bool (*fn)();
@@ -166,6 +382,15 @@ int main() {
         {"detect_sillytavern_root_from_parent", test_detect_sillytavern_root_from_parent},
         {"manager_create_from_root_creates_device_id", test_manager_create_from_root_creates_device_id},
         {"is_connectable_host_rejects_wildcard", test_is_connectable_host_rejects_wildcard},
+        {"select_pair_device_prompts_for_single_candidate", test_select_pair_device_prompts_for_single_candidate},
+        {"select_pair_device_rejects_invalid_selection", test_select_pair_device_rejects_invalid_selection},
+        {"select_pair_device_skips_prompt_with_explicit_device_id",
+         test_select_pair_device_skips_prompt_with_explicit_device_id},
+        {"select_pair_device_rejects_unconnectable_endpoint",
+         test_select_pair_device_rejects_unconnectable_endpoint},
+        {"select_command_run", test_select_command_run},
+        {"select_command_pair", test_select_command_pair},
+        {"select_command_rejects_invalid_input", test_select_command_rejects_invalid_input},
     };
 
     int passed_count = 0;
