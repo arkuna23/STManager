@@ -34,60 +34,6 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
         run: ctest --preset linux-debug
 
-  windows-native-mingw:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup MSYS2 (MinGW64)
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-
-      - name: Bootstrap vcpkg
-        shell: msys2 {0}
-        run: |
-          WORKSPACE_UNIX="$(cygpath -u "$GITHUB_WORKSPACE")"
-          git clone https://github.com/microsoft/vcpkg "$WORKSPACE_UNIX/vcpkg"
-          "$WORKSPACE_UNIX/vcpkg/bootstrap-vcpkg.sh"
-
-      - name: Configure
-        shell: msys2 {0}
-        run: |
-          WORKSPACE_UNIX="$(cygpath -u "$GITHUB_WORKSPACE")"
-          export VCPKG_ROOT="$WORKSPACE_UNIX/vcpkg"
-          cmake --preset windows-native-mingw-release-static \
-            -DCMAKE_C_COMPILER=gcc \
-            -DCMAKE_CXX_COMPILER=g++
-
-      - name: Build
-        shell: msys2 {0}
-        run: |
-          WORKSPACE_UNIX="$(cygpath -u "$GITHUB_WORKSPACE")"
-          export VCPKG_ROOT="$WORKSPACE_UNIX/vcpkg"
-          cmake --build --preset windows-native-mingw-release-static -j
-
-      - name: Test
-        shell: msys2 {0}
-        run: |
-          WORKSPACE_UNIX="$(cygpath -u "$GITHUB_WORKSPACE")"
-          export VCPKG_ROOT="$WORKSPACE_UNIX/vcpkg"
-          ctest --preset windows-native-mingw-release-static
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-native-mingw-release
-          path: build/windows-native-mingw-release-static/stmanager.exe
-          if-no-files-found: warn
-
   linux-cross-windows:
     runs-on: ubuntu-latest
     steps:
