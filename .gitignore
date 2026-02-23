@@ -59,3 +59,6 @@ build/
 bin/
 lib/
 out/
+vcpkg_installed/
+
+SillyTavern/

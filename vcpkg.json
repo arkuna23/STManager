@@ -1,0 +1,8 @@
+{
+  "name": "stmanager",
+  "version-string": "1.0.0",
+  "dependencies": [
+    "libarchive",
+    "nlohmann-json"
+  ]
+}
