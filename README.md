@@ -72,23 +72,25 @@ Run this on the device you want to pull data from:
 
 Defaults:
 - `--root` auto-detects from current/parent directories
-- `--port` defaults to `0` (auto-selected)
+- `--port` defaults to `38591`
 - `--bind` defaults to `0.0.0.0`
 
 ### Pair and pull from destination device
 
 ```bash
 ./build/Release/stmanager pair \
-  --root /path/to/local/SillyTavern \
-  --device-id <source_device_id> \
-  --host <source_ip> \
-  --port <source_port>
+  --root /path/to/local/SillyTavern
 ```
 
 Optional flags:
+- `--device-id <id>`: skip selection prompt and target one device directly
+- `--host <ip>` and `--port <port>`: direct connection bypassing discovery
 - `--pairing-code <code>`
 - `--dest-root <path>` to restore into another root
 - `--git-mode` for extension backup behavior
+
+If `--device-id` is not provided, `pair` auto-discovers devices in the local network and shows a list for interactive selection.
+The discovered endpoint host is always a connectable LAN address (not `0.0.0.0`).
 
 ## Library Quick Start
 
@@ -105,4 +107,5 @@ if (manager.is_valid()) {
 
 - Current sync runtime is Linux-oriented (sockets and signal handling).
 - Device discovery/advertise is implemented inside the library via UDP LAN discovery and does not require Avahi daemon.
+- `run --bind` controls listening interface only; discovery returns peer-reachable source IP for connection.
 - Trust state is stored under `<root>/.stmanager/` by the CLI.

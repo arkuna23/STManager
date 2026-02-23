@@ -1,5 +1,6 @@
 #include <STManager/sync.h>
 
+#include "archive_stream.h"
 #include "discovery_mdns.h"
 
 #include <arpa/inet.h>
@@ -332,18 +333,30 @@ Status handle_auth_request(
         return send_json_response(client_fd, "auth_response", false, "Only pull direction is supported");
     }
 
+    std::stringstream backup_stream(std::ios::in | std::ios::out | std::ios::binary);
+    const Status backup_status = data_manager.backup(backup_stream);
+    if (!backup_status.ok()) {
+        return send_json_response(client_fd, "auth_response", false, backup_status.message);
+    }
+
+    const std::string backup_bytes = backup_stream.str();
+    if (backup_bytes.empty()) {
+        return send_json_response(client_fd, "auth_response", false, "Backup produced empty archive");
+    }
+
+    std::istringstream validate_stream(backup_bytes, std::ios::binary);
+    const Status validate_status = internal::validate_backup_archive(validate_stream);
+    if (!validate_status.ok()) {
+        return send_json_response(client_fd, "auth_response", false, validate_status.message);
+    }
+
     const Status response_status = send_json_response(client_fd, "auth_response", true, std::string());
     if (!response_status.ok()) {
         return response_status;
     }
 
-    std::stringstream backup_stream(std::ios::in | std::ios::out | std::ios::binary);
-    const Status backup_status = data_manager.backup(backup_stream);
-    if (!backup_status.ok()) {
-        return backup_status;
-    }
-
-    return send_framed_stream(client_fd, backup_stream);
+    std::istringstream send_stream(backup_bytes, std::ios::binary);
+    return send_framed_stream(client_fd, send_stream);
 }
 
 Status handle_client_connection(
@@ -487,7 +500,7 @@ Status run_sync_server(
         const Status discovery_start_status = discovery_responder_scope.start(
             local_device_id,
             advertise_name,
-            options.bind_host,
+            std::string(),
             actual_port);
         if (!discovery_start_status.ok()) {
             close(listen_fd);

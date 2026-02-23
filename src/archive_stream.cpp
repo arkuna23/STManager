@@ -29,15 +29,6 @@ namespace {
 const char* kGitManifestPath = ".stmanager/extensions_git_manifest.json";
 const size_t kStreamBufferSize = 64 * 1024;
 
-struct OstreamWriteContext {
-    std::ostream* out;
-};
-
-struct IstreamReadContext {
-    std::istream* in;
-    std::vector<char> buffer;
-};
-
 std::string join_path(const std::string& lhs, const std::string& rhs) {
     if (lhs.empty()) {
         return rhs;
@@ -60,34 +51,49 @@ Status make_io_error(const std::string& action, const std::string& path) {
     return Status(StatusCode::kIoError, message.str());
 }
 
-int archive_write_open_callback(struct archive*, void*) { return ARCHIVE_OK; }
-
-la_ssize_t archive_write_callback(struct archive*, void* client_data, const void* buffer, size_t length) {
-    OstreamWriteContext* context = static_cast<OstreamWriteContext*>(client_data);
-    context->out->write(static_cast<const char*>(buffer), static_cast<std::streamsize>(length));
-    if (!(*context->out)) {
-        return -1;
-    }
-    return static_cast<la_ssize_t>(length);
-}
-
-int archive_write_close_callback(struct archive*, void*) { return ARCHIVE_OK; }
-
-int archive_read_open_callback(struct archive*, void*) { return ARCHIVE_OK; }
-
-la_ssize_t archive_read_callback(struct archive*, void* client_data, const void** buffer) {
-    IstreamReadContext* context = static_cast<IstreamReadContext*>(client_data);
-    context->in->read(context->buffer.data(), static_cast<std::streamsize>(context->buffer.size()));
-    const std::streamsize read_count = context->in->gcount();
-    if (read_count <= 0) {
-        return 0;
+Status create_temp_archive_file_path(std::string* path) {
+    if (path == NULL) {
+        return Status(StatusCode::kIoError, "Temporary archive path output cannot be null");
     }
 
-    *buffer = context->buffer.data();
-    return static_cast<la_ssize_t>(read_count);
+    char path_template[] = "/tmp/stmanager-backup-XXXXXX";
+    const int temp_fd = mkstemp(path_template);
+    if (temp_fd < 0) {
+        return Status(StatusCode::kIoError, "Failed to create temporary backup file");
+    }
+
+    close(temp_fd);
+    *path = path_template;
+    return Status::ok_status();
 }
 
-int archive_read_close_callback(struct archive*, void*) { return ARCHIVE_OK; }
+Status copy_file_to_output_stream(const std::string& file_path, std::ostream& out) {
+    const int source_fd = open(file_path.c_str(), O_RDONLY);
+    if (source_fd < 0) {
+        return make_io_error("open", file_path);
+    }
+
+    std::vector<char> file_buffer(kStreamBufferSize);
+    while (true) {
+        const ssize_t read_count = read(source_fd, file_buffer.data(), file_buffer.size());
+        if (read_count < 0) {
+            close(source_fd);
+            return make_io_error("read", file_path);
+        }
+        if (read_count == 0) {
+            break;
+        }
+
+        out.write(file_buffer.data(), static_cast<std::streamsize>(read_count));
+        if (!out) {
+            close(source_fd);
+            return Status(StatusCode::kIoError, "Output stream write failed while copying backup archive");
+        }
+    }
+
+    close(source_fd);
+    return Status::ok_status();
+}
 
 Status write_entry_header(
     struct archive* archive_writer,
@@ -144,22 +150,63 @@ Status write_archive_data(
     return Status::ok_status();
 }
 
-Status write_regular_file_data(struct archive* archive_writer, const std::string& source_path) {
+Status read_stream_to_memory(std::istream& in, std::string* output) {
+    if (output == NULL) {
+        return Status(StatusCode::kIoError, "Output buffer for stream read cannot be null");
+    }
+
+    std::string data;
+    std::vector<char> buffer(kStreamBufferSize);
+    while (in.read(buffer.data(), static_cast<std::streamsize>(buffer.size())) || in.gcount() > 0) {
+        data.append(buffer.data(), static_cast<std::string::size_type>(in.gcount()));
+    }
+
+    if (!in.eof() && in.fail()) {
+        return Status(StatusCode::kIoError, "Failed reading archive stream into memory");
+    }
+
+    *output = data;
+    return Status::ok_status();
+}
+
+Status finalize_archive_entry(struct archive* archive_writer, const std::string& context) {
+    const int finish_status = archive_write_finish_entry(archive_writer);
+    if (finish_status != ARCHIVE_OK) {
+        const std::string archive_error = archive_error_string(archive_writer);
+        return Status(StatusCode::kArchiveError, context + ": " + archive_error);
+    }
+    return Status::ok_status();
+}
+
+Status write_regular_file_data(
+    struct archive* archive_writer,
+    const std::string& source_path,
+    size_t expected_file_size) {
     int source_fd = open(source_path.c_str(), O_RDONLY);
     if (source_fd < 0) {
         return make_io_error("open", source_path);
     }
 
     std::vector<char> file_buffer(kStreamBufferSize);
-    while (true) {
-        const ssize_t read_count = read(source_fd, file_buffer.data(), file_buffer.size());
+    size_t total_read_size = 0;
+    while (total_read_size < expected_file_size) {
+        const size_t remaining_size = expected_file_size - total_read_size;
+        const size_t chunk_size = remaining_size < file_buffer.size()
+            ? remaining_size
+            : file_buffer.size();
+
+        const ssize_t read_count = read(source_fd, file_buffer.data(), chunk_size);
         if (read_count < 0) {
             close(source_fd);
             return make_io_error("read", source_path);
         }
         if (read_count == 0) {
-            break;
+            std::ostringstream message;
+            message << "File changed during backup (unexpected EOF): " << source_path;
+            close(source_fd);
+            return Status(StatusCode::kIoError, message.str());
         }
+        total_read_size += static_cast<size_t>(read_count);
 
         const Status write_status = write_archive_data(
             archive_writer,
@@ -173,7 +220,8 @@ Status write_regular_file_data(struct archive* archive_writer, const std::string
     }
 
     close(source_fd);
-    return Status::ok_status();
+
+    return finalize_archive_entry(archive_writer, "Failed to finalize archive file entry");
 }
 
 Status write_file_or_directory(
@@ -194,6 +242,10 @@ Status write_directory_recursive(
     const Status header_status = write_entry_header(archive_writer, archive_path, directory_stat, 0);
     if (!header_status.ok()) {
         return header_status;
+    }
+    const Status finalize_status = finalize_archive_entry(archive_writer, "Failed to finalize archive directory entry");
+    if (!finalize_status.ok()) {
+        return finalize_status;
     }
 
     DIR* directory = opendir(source_path.c_str());
@@ -253,12 +305,13 @@ Status write_file_or_directory(
     }
 
     if (is_regular_file(source_stat.st_mode)) {
+        const size_t file_size = static_cast<size_t>(source_stat.st_size);
         const Status header_status = write_entry_header(
-            archive_writer, archive_path, source_stat, static_cast<size_t>(source_stat.st_size));
+            archive_writer, archive_path, source_stat, file_size);
         if (!header_status.ok()) {
             return header_status;
         }
-        return write_regular_file_data(archive_writer, source_path);
+        return write_regular_file_data(archive_writer, source_path, file_size);
     }
 
     return Status(StatusCode::kUnsupportedArchiveEntry, "Unsupported file type in backup source");
@@ -287,7 +340,7 @@ Status write_manifest_file(struct archive* archive_writer, const std::string& js
         }
     }
 
-    return Status::ok_status();
+    return finalize_archive_entry(archive_writer, "Failed to finalize manifest archive entry");
 }
 
 Status restore_regular_file(struct archive* archive_reader, const std::string& destination_path, mode_t mode) {
@@ -366,17 +419,17 @@ Status write_backup_archive(
         return Status(StatusCode::kArchiveError, "Failed to enable zstd filter: " + archive_error);
     }
 
-    OstreamWriteContext write_context;
-    write_context.out = &out;
+    std::string temp_archive_path;
+    const Status temp_path_status = create_temp_archive_file_path(&temp_archive_path);
+    if (!temp_path_status.ok()) {
+        archive_write_free(archive_writer);
+        return temp_path_status;
+    }
 
-    if (archive_write_open(
-            archive_writer,
-            &write_context,
-            archive_write_open_callback,
-            archive_write_callback,
-            archive_write_close_callback) != ARCHIVE_OK) {
+    if (archive_write_open_filename(archive_writer, temp_archive_path.c_str()) != ARCHIVE_OK) {
         const std::string archive_error = archive_error_string(archive_writer);
         archive_write_free(archive_writer);
+        unlink(temp_archive_path.c_str());
         return Status(StatusCode::kArchiveError, "Failed to open archive stream: " + archive_error);
     }
 
@@ -388,6 +441,7 @@ Status write_backup_archive(
         if (!collect_status.ok()) {
             archive_write_close(archive_writer);
             archive_write_free(archive_writer);
+            unlink(temp_archive_path.c_str());
             return collect_status;
         }
     }
@@ -396,6 +450,7 @@ Status write_backup_archive(
     if (!data_status.ok()) {
         archive_write_close(archive_writer);
         archive_write_free(archive_writer);
+        unlink(temp_archive_path.c_str());
         return data_status;
     }
 
@@ -404,6 +459,7 @@ Status write_backup_archive(
     if (!extensions_root_status.ok()) {
         archive_write_close(archive_writer);
         archive_write_free(archive_writer);
+        unlink(temp_archive_path.c_str());
         return extensions_root_status;
     }
 
@@ -413,6 +469,7 @@ Status write_backup_archive(
         if (!manifest_status.ok()) {
             archive_write_close(archive_writer);
             archive_write_free(archive_writer);
+            unlink(temp_archive_path.c_str());
             return manifest_status;
         }
     }
@@ -420,14 +477,86 @@ Status write_backup_archive(
     if (archive_write_close(archive_writer) != ARCHIVE_OK) {
         const std::string archive_error = archive_error_string(archive_writer);
         archive_write_free(archive_writer);
+        unlink(temp_archive_path.c_str());
         return Status(StatusCode::kArchiveError, "Failed to close archive writer: " + archive_error);
     }
 
     archive_write_free(archive_writer);
+
+    const Status copy_status = copy_file_to_output_stream(temp_archive_path, out);
+    unlink(temp_archive_path.c_str());
+    if (!copy_status.ok()) {
+        return copy_status;
+    }
+
     if (!out) {
         return Status(StatusCode::kIoError, "Output stream write failed");
     }
 
+    return Status::ok_status();
+}
+
+Status validate_backup_archive(std::istream& in) {
+    struct archive* archive_reader = archive_read_new();
+    if (archive_reader == NULL) {
+        return Status(StatusCode::kArchiveError, "Failed to initialize archive reader");
+    }
+
+    archive_read_support_format_tar(archive_reader);
+    archive_read_support_filter_zstd(archive_reader);
+
+    in.clear();
+    in.seekg(0, std::ios::beg);
+
+    std::string archive_bytes;
+    const Status read_status = read_stream_to_memory(in, &archive_bytes);
+    if (!read_status.ok()) {
+        archive_read_free(archive_reader);
+        return read_status;
+    }
+
+    if (archive_bytes.empty()) {
+        archive_read_free(archive_reader);
+        return Status(StatusCode::kArchiveError, "Archive stream is empty");
+    }
+
+    if (archive_read_open_memory(
+            archive_reader,
+            archive_bytes.data(),
+            archive_bytes.size()) != ARCHIVE_OK) {
+        const std::string archive_error = archive_error_string(archive_reader);
+        archive_read_free(archive_reader);
+        return Status(StatusCode::kArchiveError, "Failed to open archive input stream: " + archive_error);
+    }
+
+    struct archive_entry* archive_entry = NULL;
+    int next_header_status = ARCHIVE_OK;
+    while ((next_header_status = archive_read_next_header(archive_reader, &archive_entry)) == ARCHIVE_OK) {
+        const int skip_status = archive_read_data_skip(archive_reader);
+        if (skip_status != ARCHIVE_OK) {
+            const std::string archive_error = archive_error_string(archive_reader);
+            archive_read_close(archive_reader);
+            archive_read_free(archive_reader);
+            return Status(StatusCode::kArchiveError, "Archive validation failed: " + archive_error);
+        }
+    }
+
+    if (next_header_status != ARCHIVE_EOF) {
+        const std::string archive_error = archive_error_string(archive_reader);
+        archive_read_close(archive_reader);
+        archive_read_free(archive_reader);
+        return Status(StatusCode::kArchiveError, "Archive validation failed: " + archive_error);
+    }
+
+    if (archive_read_close(archive_reader) != ARCHIVE_OK) {
+        const std::string archive_error = archive_error_string(archive_reader);
+        archive_read_free(archive_reader);
+        return Status(StatusCode::kArchiveError, "Failed to close archive reader: " + archive_error);
+    }
+
+    archive_read_free(archive_reader);
+    in.clear();
+    in.seekg(0, std::ios::beg);
     return Status::ok_status();
 }
 
@@ -440,16 +569,22 @@ Status restore_backup_archive(std::istream& in, const std::string& destination_r
     archive_read_support_format_tar(archive_reader);
     archive_read_support_filter_zstd(archive_reader);
 
-    IstreamReadContext read_context;
-    read_context.in = &in;
-    read_context.buffer.resize(kStreamBufferSize);
+    std::string archive_bytes;
+    const Status read_status = read_stream_to_memory(in, &archive_bytes);
+    if (!read_status.ok()) {
+        archive_read_free(archive_reader);
+        return read_status;
+    }
 
-    if (archive_read_open(
+    if (archive_bytes.empty()) {
+        archive_read_free(archive_reader);
+        return Status(StatusCode::kArchiveError, "Archive stream is empty");
+    }
+
+    if (archive_read_open_memory(
             archive_reader,
-            &read_context,
-            archive_read_open_callback,
-            archive_read_callback,
-            archive_read_close_callback) != ARCHIVE_OK) {
+            archive_bytes.data(),
+            archive_bytes.size()) != ARCHIVE_OK) {
         const std::string archive_error = archive_error_string(archive_reader);
         archive_read_free(archive_reader);
         return Status(StatusCode::kArchiveError, "Failed to open archive input stream: " + archive_error);

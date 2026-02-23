@@ -15,6 +15,8 @@ Status write_backup_archive(
     std::ostream& out,
     const BackupOptions& options);
 
+Status validate_backup_archive(std::istream& in);
+
 Status restore_backup_archive(std::istream& in, const std::string& destination_root);
 
 }  // namespace internal

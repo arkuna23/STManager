@@ -78,6 +78,7 @@ target_compile_features(STManagerStatic PUBLIC cxx_std_11)
 
 add_executable(stmanager
     cli/cli_args.cpp
+    cli/cli_net.cpp
     cli/cli_state.cpp
     cli/main.cpp
 )
@@ -149,6 +150,7 @@ add_executable(stmanager_cli_tests
     tests/cli_tests.cpp
     tests/test_helpers.cpp
     cli/cli_args.cpp
+    cli/cli_net.cpp
     cli/cli_state.cpp
 )
 

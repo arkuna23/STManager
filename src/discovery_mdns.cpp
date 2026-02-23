@@ -109,7 +109,7 @@ std::string build_discovery_response_message(const DeviceInfo& local_device) {
     response_json["protocol"] = kDiscoveryProtocol;
     response_json["device_id"] = local_device.device_id;
     response_json["device_name"] = local_device.device_name;
-    response_json["host"] = local_device.host;
+    response_json["host"] = std::string();
     response_json["port"] = local_device.port;
     return response_json.dump();
 }
@@ -137,6 +137,10 @@ bool receive_discovery_response(int socket_fd, DeviceInfo* device_info) {
     std::memset(host_buffer, 0, sizeof(host_buffer));
     const char* host_text = inet_ntop(AF_INET, &source_addr.sin_addr, host_buffer, sizeof(host_buffer));
     const std::string fallback_host = host_text == NULL ? std::string() : std::string(host_text);
+
+    if (fallback_host.empty() || fallback_host == "0.0.0.0") {
+        return false;
+    }
 
     return parse_discovery_response_message(buffer, fallback_host, device_info);
 }

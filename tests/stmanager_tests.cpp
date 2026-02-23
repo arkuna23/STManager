@@ -1,6 +1,7 @@
 #include <STManager/data.h>
 #include <STManager/sync.h>
 
+#include "../src/archive_stream.h"
 #include "test_helpers.h"
 
 #include <archive.h>
@@ -483,6 +484,62 @@ bool test_backup_git_mode_skips_git_extensions_and_writes_manifest() {
     return context.failed_assertions == 0;
 }
 
+bool test_backup_archive_stream_validates_successfully() {
+    TestContext context;
+
+    const std::string source_root = STManagerTest::create_sillytavern_fixture("backup-validate");
+    TempDirGuard source_guard(source_root);
+
+    EXPECT_TRUE(context, STManagerTest::write_file(
+        STManagerTest::join_path(source_root, "data/worlds/settings.json"),
+        "{\"mode\":\"single\"}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-validate/main.js"),
+        "module.exports = true;"));
+
+    const DataManager manager = DataManager::locate(source_root);
+    EXPECT_TRUE(context, manager.is_valid());
+
+    std::stringstream backup_stream(std::ios::in | std::ios::out | std::ios::binary);
+    EXPECT_STATUS_OK(context, manager.backup(backup_stream));
+
+    backup_stream.clear();
+    backup_stream.seekg(0, std::ios::beg);
+    EXPECT_STATUS_OK(context, STManager::internal::validate_backup_archive(backup_stream));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_backup_archive_with_nested_directories_validates_successfully() {
+    TestContext context;
+
+    const std::string source_root = STManagerTest::create_sillytavern_fixture("backup-validate-nested");
+    TempDirGuard source_guard(source_root);
+
+    EXPECT_TRUE(context, STManagerTest::create_directories(
+        STManagerTest::join_path(source_root, "data/worlds/campaign/chapter1")));
+    EXPECT_TRUE(context, STManagerTest::create_directories(
+        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-deep/assets/icons")));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+        STManagerTest::join_path(source_root, "data/worlds/campaign/chapter1/state.json"),
+        "{\"chapter\":1}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+        STManagerTest::join_path(source_root, "public/scripts/extensions/ext-deep/assets/icons/readme.txt"),
+        "nested asset"));
+
+    const DataManager manager = DataManager::locate(source_root);
+    EXPECT_TRUE(context, manager.is_valid());
+
+    std::stringstream backup_stream(std::ios::in | std::ios::out | std::ios::binary);
+    EXPECT_STATUS_OK(context, manager.backup(backup_stream));
+
+    backup_stream.clear();
+    backup_stream.seekg(0, std::ios::beg);
+    EXPECT_STATUS_OK(context, STManager::internal::validate_backup_archive(backup_stream));
+
+    return context.failed_assertions == 0;
+}
+
 bool test_restore_rejects_traversal_entry() {
     TestContext context;
 
@@ -671,6 +728,8 @@ int main() {
         {"locate_missing_data_fails", test_locate_missing_data_fails},
         {"backup_restore_roundtrip_data_and_extensions", test_backup_restore_roundtrip_data_and_extensions},
         {"backup_git_mode_skips_git_extensions_and_writes_manifest", test_backup_git_mode_skips_git_extensions_and_writes_manifest},
+        {"backup_archive_stream_validates_successfully", test_backup_archive_stream_validates_successfully},
+        {"backup_archive_with_nested_directories_validates_successfully", test_backup_archive_with_nested_directories_validates_successfully},
         {"restore_rejects_traversal_entry", test_restore_rejects_traversal_entry},
         {"sync_push_requires_trusted_device", test_sync_push_requires_trusted_device},
         {"sync_pair_then_push_success", test_sync_pair_then_push_success},

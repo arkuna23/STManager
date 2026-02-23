@@ -118,11 +118,6 @@ bool parse_pair_args(int argc, char** argv, ParsedArgs* parsed_args, std::string
         return false;
     }
 
-    if (args.device_id.empty()) {
-        *error_message = "--device-id is required for pair";
-        return false;
-    }
-
     parsed_args->command_type = CommandType::kPair;
     parsed_args->pair_args = args;
     return true;
@@ -157,7 +152,7 @@ std::string build_help_text() {
     out << "Commands:\n";
     out << "  stmanager run [--root <path>] [--bind <host>] [--port <port>] "
            "[--pairing-code <code>] [--advertise true|false]\n";
-    out << "  stmanager pair [--root <path>] [--host <ip>] [--port <port>] --device-id <id> "
+    out << "  stmanager pair [--root <path>] [--host <ip>] [--port <port>] [--device-id <id>] "
            "[--pairing-code <code>] [--dest-root <path>] [--git-mode]\n";
     out << "\nDefaults:\n";
     out << "  run --port defaults to " << kDefaultSyncPort << "\n";

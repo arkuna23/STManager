@@ -1,6 +1,7 @@
 #include "test_helpers.h"
 
 #include "cli_args.h"
+#include "cli_net.h"
 #include "cli_state.h"
 
 #include <unistd.h>
@@ -85,7 +86,7 @@ bool test_parse_run_defaults() {
     return context.failed_assertions == 0;
 }
 
-bool test_parse_pair_requires_device_id() {
+bool test_parse_pair_allows_missing_device_id() {
     TestContext context;
 
     char command_0[] = "stmanager";
@@ -94,8 +95,9 @@ bool test_parse_pair_requires_device_id() {
 
     STManagerCli::ParsedArgs parsed_args;
     std::string error_message;
-    EXPECT_TRUE(context, !STManagerCli::parse_cli_args(2, argv, &parsed_args, &error_message));
-    EXPECT_TRUE(context, error_message.find("--device-id is required") != std::string::npos);
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(2, argv, &parsed_args, &error_message));
+    EXPECT_EQ(context, static_cast<int>(parsed_args.command_type), static_cast<int>(STManagerCli::CommandType::kPair));
+    EXPECT_TRUE(context, parsed_args.pair_args.device_id.empty());
 
     return context.failed_assertions == 0;
 }
@@ -142,6 +144,17 @@ bool test_init_local_state_creates_device_id() {
     return context.failed_assertions == 0;
 }
 
+bool test_is_connectable_host_rejects_wildcard() {
+    TestContext context;
+
+    EXPECT_TRUE(context, !STManagerCli::is_connectable_host(""));
+    EXPECT_TRUE(context, !STManagerCli::is_connectable_host("0.0.0.0"));
+    EXPECT_TRUE(context, STManagerCli::is_connectable_host("127.0.0.1"));
+    EXPECT_TRUE(context, STManagerCli::is_connectable_host("192.168.1.20"));
+
+    return context.failed_assertions == 0;
+}
+
 struct TestCase {
     const char* name;
     bool (*fn)();
@@ -152,9 +165,10 @@ struct TestCase {
 int main() {
     const TestCase test_cases[] = {
         {"parse_run_defaults", test_parse_run_defaults},
-        {"parse_pair_requires_device_id", test_parse_pair_requires_device_id},
+        {"parse_pair_allows_missing_device_id", test_parse_pair_allows_missing_device_id},
         {"detect_sillytavern_root_from_parent", test_detect_sillytavern_root_from_parent},
         {"init_local_state_creates_device_id", test_init_local_state_creates_device_id},
+        {"is_connectable_host_rejects_wildcard", test_is_connectable_host_rejects_wildcard},
     };
 
     int passed_count = 0;
