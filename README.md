@@ -23,26 +23,76 @@ Managed by `vcpkg.json`:
 
 ## Build
 
-### Configure + Build (Release)
+`VCPKG_ROOT` must point to your vcpkg checkout.
+
+```bash
+cmake --preset linux-release-static
+cmake --build --preset linux-release-static -j
+```
+
+### Native Linux Debug
+
+```bash
+cmake --preset linux-debug
+cmake --build --preset linux-debug -j
+ctest --preset linux-debug
+```
+
+### Windows Build (MinGW)
+
+On Windows host (MSYS2/MinGW available in `PATH`):
+
+```bash
+cmake --preset windows-native-mingw-release-static
+cmake --build --preset windows-native-mingw-release-static -j
+ctest --preset windows-native-mingw-release-static
+```
+
+### Linux -> Windows x64 Cross Build
+
+Requires cross toolchain (`x86_64-w64-mingw32-gcc/g++`) on host:
+
+```bash
+cmake --preset linux-cross-windows-x64-release
+cmake --build --preset linux-cross-windows-x64-release -j
+```
+
+### Linux -> Android arm64 Cross Build (Library Only)
+
+Set `ANDROID_NDK_HOME` before configure:
+
+```bash
+cmake --preset linux-cross-android-arm64-release
+cmake --build --preset linux-cross-android-arm64-release -j
+```
+
+Android preset intentionally disables CLI/tests:
+- `STMANAGER_BUILD_CLI=OFF`
+- `STMANAGER_BUILD_TESTS=OFF`
+- `STMANAGER_BUILD_SHARED=OFF` (build static library target for Android)
+
+### Manual Configure (without presets)
 
 ```bash
 cmake -S . -B build/Release \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
   -DVCPKG_OVERLAY_TRIPLETS="$PWD/cmake/triplets" \
-  -DVCPKG_TARGET_TRIPLET=x64-linux-static \
-  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-
-cmake --build build/Release -j
+  -DVCPKG_TARGET_TRIPLET=x64-linux-static
 ```
 
 Outputs include:
-- `build/Release/libSTManager.so`
-- `build/Release/stmanager`
+- `build/<preset>/libSTManager.*`
+- `build/<preset>/stmanager` (when CLI is enabled)
 
 Release defaults for `stmanager`:
 - static linking enabled (`STMANAGER_CLI_STATIC_LINK=ON`)
 - size optimization enabled (`STMANAGER_CLI_SIZE_OPTIMIZED_RELEASE=ON`)
-- static Linux triplet is provided in-repo at `cmake/triplets/x64-linux-static.cmake`
+- in-repo triplets:
+  - `cmake/triplets/x64-linux-static.cmake`
+  - `cmake/triplets/x64-mingw-static.cmake`
+
+Android preset uses vcpkg built-in triplet `arm64-android` with NDK chainload toolchain.
 
 Optional overrides:
 
@@ -57,7 +107,7 @@ cmake -S . -B build/Release \
 ## Run Tests
 
 ```bash
-ctest --test-dir build/Release --output-on-failure
+ctest --preset linux-release-static
 ```
 
 ## CLI Usage
@@ -67,7 +117,7 @@ ctest --test-dir build/Release --output-on-failure
 Run this on the device you want to pull data from:
 
 ```bash
-./build/Release/stmanager run --root /path/to/SillyTavern
+./build/linux-release-static/stmanager run --root /path/to/SillyTavern
 ```
 
 Defaults:
@@ -78,7 +128,7 @@ Defaults:
 ### Pair and pull from destination device
 
 ```bash
-./build/Release/stmanager pair \
+./build/linux-release-static/stmanager pair \
   --root /path/to/local/SillyTavern
 ```
 
@@ -105,7 +155,7 @@ if (manager.is_valid()) {
 
 ## Notes
 
-- Current sync runtime is Linux-oriented (sockets and signal handling).
+- CMake presets are provided in `CMakePresets.json`.
 - Device discovery/advertise is implemented inside the library via UDP LAN discovery and does not require Avahi daemon.
 - `run --bind` controls listening interface only; discovery returns peer-reachable source IP for connection.
 - Trust state is stored under `<root>/.stmanager/` by the CLI.

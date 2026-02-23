@@ -2,7 +2,17 @@
   "name": "stmanager",
   "version-string": "1.0.0",
   "dependencies": [
-    "libarchive",
+    {
+      "name": "libarchive",
+      "default-features": false,
+      "features": [
+        "bzip2",
+        "crypto",
+        "lz4",
+        "lzma",
+        "zstd"
+      ]
+    },
     "nlohmann-json"
   ]
 }

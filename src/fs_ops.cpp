@@ -1,10 +1,13 @@
 #include "fs_ops.h"
+#include "platform_compat.h"
 
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include <cerrno>
 #include <cstring>
@@ -51,7 +54,7 @@ Status copy_regular_file(const std::string& source_path, const std::string& dest
                                     static_cast<int>(source_mode & 0777));
     if (destination_fd < 0) {
         const int open_error = errno;
-        close(source_fd);
+        close_file_fd(source_fd);
         return make_io_error("open", destination_path, open_error);
     }
 
@@ -60,8 +63,8 @@ Status copy_regular_file(const std::string& source_path, const std::string& dest
         const ssize_t read_count = read(source_fd, file_buffer.data(), file_buffer.size());
         if (read_count < 0) {
             const int read_error = errno;
-            close(source_fd);
-            close(destination_fd);
+            close_file_fd(source_fd);
+            close_file_fd(destination_fd);
             return make_io_error("read", source_path, read_error);
         }
         if (read_count == 0) {
@@ -74,27 +77,27 @@ Status copy_regular_file(const std::string& source_path, const std::string& dest
                                               static_cast<size_t>(read_count - total_written));
             if (write_count < 0) {
                 const int write_error = errno;
-                close(source_fd);
-                close(destination_fd);
+                close_file_fd(source_fd);
+                close_file_fd(destination_fd);
                 return make_io_error("write", destination_path, write_error);
             }
             total_written += write_count;
         }
     }
 
-    close(source_fd);
-    close(destination_fd);
+    close_file_fd(source_fd);
+    close_file_fd(destination_fd);
     return Status::ok_status();
 }
 
 Status copy_path_recursive_impl(const std::string& source_path,
                                 const std::string& destination_path) {
     struct stat source_stat;
-    if (lstat(source_path.c_str(), &source_stat) != 0) {
+    if (path_lstat(source_path.c_str(), &source_stat) != 0) {
         return make_io_error("lstat", source_path, errno);
     }
 
-    if (S_ISLNK(source_stat.st_mode)) {
+    if (mode_is_symlink(source_stat.st_mode)) {
         return Status(StatusCode::kUnsupportedArchiveEntry,
                       "Symlink entries are not supported for recursive copy");
     }
@@ -143,12 +146,12 @@ Status copy_path_recursive_impl(const std::string& source_path,
 
 bool path_exists(const std::string& path) {
     struct stat path_stat;
-    return lstat(path.c_str(), &path_stat) == 0;
+    return path_lstat(path.c_str(), &path_stat) == 0;
 }
 
 bool path_is_directory(const std::string& path) {
     struct stat path_stat;
-    if (lstat(path.c_str(), &path_stat) != 0) {
+    if (path_lstat(path.c_str(), &path_stat) != 0) {
         return false;
     }
     return S_ISDIR(path_stat.st_mode);
@@ -169,7 +172,7 @@ Status create_temp_directory_under(const std::string& base_directory, const std:
     std::vector<char> template_buffer(directory_template.begin(), directory_template.end());
     template_buffer.push_back('\0');
 
-    char* created_directory = mkdtemp(template_buffer.data());
+    char* created_directory = path_mkdtemp(template_buffer.data());
     if (created_directory == NULL) {
         return make_io_error("mkdtemp", directory_template, errno);
     }
@@ -180,7 +183,7 @@ Status create_temp_directory_under(const std::string& base_directory, const std:
 
 Status remove_path_recursive(const std::string& path) {
     struct stat path_stat;
-    if (lstat(path.c_str(), &path_stat) != 0) {
+    if (path_lstat(path.c_str(), &path_stat) != 0) {
         if (errno == ENOENT) {
             return Status::ok_status();
         }

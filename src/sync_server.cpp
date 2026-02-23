@@ -2,19 +2,25 @@
 
 #include "archive_stream.h"
 #include "discovery_mdns.h"
+#include "platform_compat.h"
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <poll.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
+#include <csignal>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <sstream>
@@ -30,28 +36,21 @@ void handle_sigint(int) {
 
 class SignalScope {
 public:
-    SignalScope() : has_previous_(false) {
+    SignalScope() : previous_handler_(SIG_ERR), has_previous_(false) {
         g_stop_server = 0;
-
-        struct sigaction action;
-        std::memset(&action, 0, sizeof(action));
-        action.sa_handler = handle_sigint;
-        sigemptyset(&action.sa_mask);
-        action.sa_flags = 0;
-
-        if (sigaction(SIGINT, &action, &previous_action_) == 0) {
-            has_previous_ = true;
-        }
+        previous_handler_ = std::signal(SIGINT, handle_sigint);
+        has_previous_ = previous_handler_ != SIG_ERR;
     }
 
     ~SignalScope() {
         if (has_previous_) {
-            sigaction(SIGINT, &previous_action_, NULL);
+            std::signal(SIGINT, previous_handler_);
         }
     }
 
 private:
-    struct sigaction previous_action_;
+    typedef void (*SignalHandler)(int);
+    SignalHandler previous_handler_;
     bool has_previous_;
 };
 
@@ -103,8 +102,33 @@ private:
 
 Status make_io_error(const std::string& prefix) {
     std::ostringstream message_stream;
-    message_stream << prefix << ": " << std::strerror(errno);
+    message_stream << prefix << ": " << internal::socket_last_error_message();
     return Status(StatusCode::kIoError, message_stream.str());
+}
+
+int set_socket_option_int(int socket_fd, int level, int option_name, int option_value) {
+#ifdef _WIN32
+    return setsockopt(
+        socket_fd,
+        level,
+        option_name,
+        reinterpret_cast<const char*>(&option_value),
+        static_cast<int>(sizeof(option_value)));
+#else
+    return setsockopt(socket_fd, level, option_name, &option_value, sizeof(option_value));
+#endif
+}
+
+int wait_for_socket_readable(int socket_fd, int timeout_ms) {
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(socket_fd, &read_fds);
+
+    struct timeval timeout;
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = (timeout_ms % 1000) * 1000;
+
+    return select(socket_fd + 1, &read_fds, NULL, NULL, &timeout);
 }
 
 Status write_all(int socket_fd, const char* data, size_t size) {
@@ -112,7 +136,7 @@ Status write_all(int socket_fd, const char* data, size_t size) {
     while (sent_size < size) {
         const ssize_t write_size = send(socket_fd, data + sent_size, size - sent_size, 0);
         if (write_size < 0) {
-            if (errno == EINTR) {
+            if (internal::socket_error_is_interrupt()) {
                 continue;
             }
             return make_io_error("Socket write failed");
@@ -130,7 +154,7 @@ Status read_all(int socket_fd, char* data, size_t size) {
     while (received_size < size) {
         const ssize_t read_size = recv(socket_fd, data + received_size, size - received_size, 0);
         if (read_size < 0) {
-            if (errno == EINTR) {
+            if (internal::socket_error_is_interrupt()) {
                 continue;
             }
             return make_io_error("Socket read failed");
@@ -425,17 +449,17 @@ Status create_listen_socket(const ServerOptions& options, int* listen_fd, int* b
         }
 
         int reuse = 1;
-        setsockopt(candidate_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        set_socket_option_int(candidate_fd, SOL_SOCKET, SO_REUSEADDR, reuse);
 
         if (bind(candidate_fd, addr->ai_addr, addr->ai_addrlen) != 0) {
             last_error = make_io_error("bind failed");
-            close(candidate_fd);
+            internal::close_socket_fd(candidate_fd);
             continue;
         }
 
         if (listen(candidate_fd, 8) != 0) {
             last_error = make_io_error("listen failed");
-            close(candidate_fd);
+            internal::close_socket_fd(candidate_fd);
             continue;
         }
 
@@ -443,7 +467,7 @@ Status create_listen_socket(const ServerOptions& options, int* listen_fd, int* b
         socklen_t local_addr_len = sizeof(local_addr);
         if (getsockname(candidate_fd, reinterpret_cast<struct sockaddr*>(&local_addr), &local_addr_len) != 0) {
             last_error = make_io_error("getsockname failed");
-            close(candidate_fd);
+            internal::close_socket_fd(candidate_fd);
             continue;
         }
 
@@ -484,6 +508,11 @@ Status run_sync_server(
         return Status(StatusCode::kSyncProtocolError, "bound_port output cannot be null");
     }
 
+    const Status runtime_status = internal::ensure_socket_runtime();
+    if (!runtime_status.ok()) {
+        return runtime_status;
+    }
+
     int listen_fd = -1;
     int actual_port = 0;
     const Status listen_status = create_listen_socket(options, &listen_fd, &actual_port);
@@ -503,27 +532,22 @@ Status run_sync_server(
             std::string(),
             actual_port);
         if (!discovery_start_status.ok()) {
-            close(listen_fd);
+            internal::close_socket_fd(listen_fd);
             return discovery_start_status;
         }
     }
 
     SignalScope signal_scope;
     while (!g_stop_server) {
-        struct pollfd poll_fd;
-        poll_fd.fd = listen_fd;
-        poll_fd.events = POLLIN;
-        poll_fd.revents = 0;
-
-        const int poll_result = poll(&poll_fd, 1, 500);
-        if (poll_result < 0) {
-            if (errno == EINTR) {
+        const int select_result = wait_for_socket_readable(listen_fd, 500);
+        if (select_result < 0) {
+            if (internal::socket_error_is_interrupt()) {
                 continue;
             }
-            close(listen_fd);
-            return make_io_error("poll failed");
+            internal::close_socket_fd(listen_fd);
+            return make_io_error("select failed");
         }
-        if (poll_result == 0) {
+        if (select_result == 0) {
             continue;
         }
 
@@ -534,10 +558,10 @@ Status run_sync_server(
             reinterpret_cast<struct sockaddr*>(&client_addr),
             &client_addr_len);
         if (client_fd < 0) {
-            if (errno == EINTR && g_stop_server) {
+            if (internal::socket_error_is_interrupt() && g_stop_server) {
                 break;
             }
-            if (errno == EINTR) {
+            if (internal::socket_error_is_interrupt()) {
                 continue;
             }
             continue;
@@ -545,12 +569,12 @@ Status run_sync_server(
 
         const Status handle_status =
             handle_client_connection(client_fd, data_manager, trusted_store, options);
-        close(client_fd);
+        internal::close_socket_fd(client_fd);
         (void)handle_status;
     }
 
     const Status discovery_stop_status = discovery_responder_scope.stop();
-    close(listen_fd);
+    internal::close_socket_fd(listen_fd);
     if (!discovery_stop_status.ok()) {
         return discovery_stop_status;
     }

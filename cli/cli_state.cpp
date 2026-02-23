@@ -4,7 +4,13 @@
 
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <cerrno>
 #include <cstdio>
@@ -54,7 +60,12 @@ bool ensure_directory_tree(const std::string& path, std::string* error_message) 
             continue;
         }
 
-        if (mkdir(current_path.c_str(), 0755) != 0 && errno != EEXIST) {
+#ifdef _WIN32
+        const int mkdir_result = _mkdir(current_path.c_str());
+#else
+        const int mkdir_result = mkdir(current_path.c_str(), 0755);
+#endif
+        if (mkdir_result != 0 && errno != EEXIST) {
             std::ostringstream out;
             out << "Failed to create directory " << current_path << ": " << std::strerror(errno);
             *error_message = out.str();
@@ -100,7 +111,13 @@ std::string dirname_path(const std::string& path) {
 
 std::string make_device_id() {
     std::ostringstream out;
-    out << "device-" << getpid() << "-" << static_cast<long>(std::time(NULL));
+    out << "device-"
+#ifdef _WIN32
+        << _getpid()
+#else
+        << getpid()
+#endif
+        << "-" << static_cast<long>(std::time(NULL));
     return out.str();
 }
 
@@ -154,7 +171,11 @@ bool detect_sillytavern_root(const std::string& explicit_root, std::string* root
     }
 
     char cwd_buffer[4096];
+#ifdef _WIN32
+    if (_getcwd(cwd_buffer, sizeof(cwd_buffer)) == NULL) {
+#else
     if (getcwd(cwd_buffer, sizeof(cwd_buffer)) == NULL) {
+#endif
         *error_message = "Failed to get current directory";
         return false;
     }

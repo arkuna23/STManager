@@ -6,7 +6,11 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -21,6 +25,7 @@
 #include "fs_ops.h"
 #include "git_manifest.h"
 #include "path_safety.h"
+#include "platform_compat.h"
 
 namespace STManager {
 namespace internal {
@@ -48,7 +53,7 @@ bool is_directory(mode_t mode) {
 }
 
 bool is_symlink(mode_t mode) {
-    return S_ISLNK(mode);
+    return mode_is_symlink(mode);
 }
 
 Status make_io_error(const std::string& action, const std::string& path) {
@@ -68,7 +73,7 @@ Status create_temp_archive_file_path(std::string* path) {
         return Status(StatusCode::kIoError, "Failed to create temporary backup file");
     }
 
-    close(temp_fd);
+    close_file_fd(temp_fd);
     *path = path_template;
     return Status::ok_status();
 }
@@ -83,7 +88,7 @@ Status copy_file_to_output_stream(const std::string& file_path, std::ostream& ou
     while (true) {
         const ssize_t read_count = read(source_fd, file_buffer.data(), file_buffer.size());
         if (read_count < 0) {
-            close(source_fd);
+            close_file_fd(source_fd);
             return make_io_error("read", file_path);
         }
         if (read_count == 0) {
@@ -92,13 +97,13 @@ Status copy_file_to_output_stream(const std::string& file_path, std::ostream& ou
 
         out.write(file_buffer.data(), static_cast<std::streamsize>(read_count));
         if (!out) {
-            close(source_fd);
+            close_file_fd(source_fd);
             return Status(StatusCode::kIoError,
                           "Output stream write failed while copying backup archive");
         }
     }
 
-    close(source_fd);
+    close_file_fd(source_fd);
     return Status::ok_status();
 }
 
@@ -195,13 +200,13 @@ Status write_regular_file_data(struct archive* archive_writer, const std::string
 
         const ssize_t read_count = read(source_fd, file_buffer.data(), chunk_size);
         if (read_count < 0) {
-            close(source_fd);
+            close_file_fd(source_fd);
             return make_io_error("read", source_path);
         }
         if (read_count == 0) {
             std::ostringstream message;
             message << "File changed during backup (unexpected EOF): " << source_path;
-            close(source_fd);
+            close_file_fd(source_fd);
             return Status(StatusCode::kIoError, message.str());
         }
         total_read_size += static_cast<size_t>(read_count);
@@ -210,12 +215,12 @@ Status write_regular_file_data(struct archive* archive_writer, const std::string
             write_archive_data(archive_writer, file_buffer.data(), static_cast<size_t>(read_count),
                                "Failed to write file data to archive");
         if (!write_status.ok()) {
-            close(source_fd);
+            close_file_fd(source_fd);
             return write_status;
         }
     }
 
-    close(source_fd);
+    close_file_fd(source_fd);
 
     return finalize_archive_entry(archive_writer, "Failed to finalize archive file entry");
 }
@@ -227,7 +232,7 @@ Status write_directory_recursive(struct archive* archive_writer, const std::stri
                                  const std::string& archive_path,
                                  const std::set<std::string>* skipped_extension_names) {
     struct stat directory_stat;
-    if (lstat(source_path.c_str(), &directory_stat) != 0) {
+    if (path_lstat(source_path.c_str(), &directory_stat) != 0) {
         return make_io_error("lstat", source_path);
     }
 
@@ -283,7 +288,7 @@ Status write_directory_recursive(struct archive* archive_writer, const std::stri
 Status write_file_or_directory(struct archive* archive_writer, const std::string& source_path,
                                const std::string& archive_path) {
     struct stat source_stat;
-    if (lstat(source_path.c_str(), &source_stat) != 0) {
+    if (path_lstat(source_path.c_str(), &source_stat) != 0) {
         return make_io_error("lstat", source_path);
     }
 
@@ -355,7 +360,7 @@ Status restore_regular_file(struct archive* archive_reader, const std::string& d
             break;
         }
         if (read_count < 0) {
-            close(destination_fd);
+            close_file_fd(destination_fd);
             return Status(StatusCode::kArchiveError,
                           "Failed to read archive file entry: " +
                               std::string(archive_error_string(archive_reader)));
@@ -366,14 +371,14 @@ Status restore_regular_file(struct archive* archive_reader, const std::string& d
             const ssize_t write_count = write(destination_fd, file_buffer.data() + total_written,
                                               static_cast<size_t>(read_count - total_written));
             if (write_count < 0) {
-                close(destination_fd);
+                close_file_fd(destination_fd);
                 return make_io_error("write", destination_path);
             }
             total_written += write_count;
         }
     }
 
-    close(destination_fd);
+    close_file_fd(destination_fd);
     return Status::ok_status();
 }
 

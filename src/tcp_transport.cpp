@@ -1,23 +1,31 @@
 #include <STManager/tcp_transport.h>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #include <cerrno>
 #include <cstring>
+#include <cstdint>
 #include <limits>
 #include <sstream>
 #include <string>
+
+#include "platform_compat.h"
 
 namespace STManager {
 namespace {
 
 Status make_io_error(const std::string& prefix) {
     std::ostringstream message_stream;
-    message_stream << prefix << ": " << std::strerror(errno);
+    message_stream << prefix << ": " << internal::socket_last_error_message();
     return Status(StatusCode::kIoError, message_stream.str());
 }
 
@@ -26,7 +34,7 @@ Status write_all(int socket_fd, const char* data, size_t size) {
     while (sent_size < size) {
         const ssize_t write_size = send(socket_fd, data + sent_size, size - sent_size, 0);
         if (write_size < 0) {
-            if (errno == EINTR) {
+            if (internal::socket_error_is_interrupt()) {
                 continue;
             }
             return make_io_error("Socket write failed");
@@ -44,7 +52,7 @@ Status read_all(int socket_fd, char* data, size_t size) {
     while (received_size < size) {
         const ssize_t read_size = recv(socket_fd, data + received_size, size - received_size, 0);
         if (read_size < 0) {
-            if (errno == EINTR) {
+            if (internal::socket_error_is_interrupt()) {
                 continue;
             }
             return make_io_error("Socket read failed");
@@ -219,6 +227,11 @@ TcpSyncTransport::~TcpSyncTransport() {
 Status TcpSyncTransport::connect(const DeviceInfo& device_info) {
     disconnect();
 
+    const Status runtime_status = internal::ensure_socket_runtime();
+    if (!runtime_status.ok()) {
+        return runtime_status;
+    }
+
     if (device_info.host.empty() || device_info.port <= 0) {
         return Status(StatusCode::kSyncProtocolError, "Device host or port is invalid");
     }
@@ -254,7 +267,7 @@ Status TcpSyncTransport::connect(const DeviceInfo& device_info) {
         }
 
         last_error = make_io_error("Socket connect failed");
-        close(candidate_fd);
+        internal::close_socket_fd(candidate_fd);
     }
 
     freeaddrinfo(resolved_addrs);
@@ -263,7 +276,7 @@ Status TcpSyncTransport::connect(const DeviceInfo& device_info) {
 
 Status TcpSyncTransport::disconnect() {
     if (socket_fd_ >= 0) {
-        close(socket_fd_);
+        internal::close_socket_fd(socket_fd_);
         socket_fd_ = -1;
     }
     return Status::ok_status();

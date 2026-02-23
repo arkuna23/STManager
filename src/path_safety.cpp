@@ -1,4 +1,5 @@
 #include "path_safety.h"
+#include "platform_compat.h"
 
 #include <sys/stat.h>
 
@@ -12,7 +13,7 @@ namespace internal {
 namespace {
 
 bool path_exists(const std::string& path, struct stat* path_stat) {
-    return lstat(path.c_str(), path_stat) == 0;
+    return path_lstat(path.c_str(), path_stat) == 0;
 }
 
 std::vector<std::string> split_path(const std::string& path) {
@@ -46,7 +47,7 @@ Status validate_no_symlink_or_nondir(const std::string& directory_path) {
     if (!path_exists(directory_path, &path_stat)) {
         return Status(StatusCode::kIoError, "Directory path component does not exist");
     }
-    if (S_ISLNK(path_stat.st_mode)) {
+    if (mode_is_symlink(path_stat.st_mode)) {
         return Status(StatusCode::kInvalidArchiveEntry, "Refusing to traverse symlink in destination path");
     }
     if (!S_ISDIR(path_stat.st_mode)) {
@@ -116,7 +117,7 @@ Status ensure_directory_tree(const std::string& directory_path, int mode) {
 
         struct stat path_stat;
         if (!path_exists(current_path, &path_stat)) {
-            if (mkdir(current_path.c_str(), static_cast<mode_t>(mode)) != 0) {
+            if (path_mkdir(current_path.c_str(), mode) != 0) {
                 std::ostringstream message;
                 message << "Failed to create directory: " << current_path << ", reason: "
                         << std::strerror(errno);

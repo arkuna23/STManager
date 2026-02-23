@@ -1,0 +1,171 @@
+name: build-matrix
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux-native:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$GITHUB_WORKSPACE/vcpkg"
+          "$GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.sh"
+
+      - name: Configure
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: cmake --preset linux-debug
+
+      - name: Build
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: cmake --build --preset linux-debug -j
+
+      - name: Test
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: ctest --preset linux-debug
+
+  windows-native-mingw:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 (MinGW64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Bootstrap vcpkg
+        shell: msys2 {0}
+        run: |
+          WORKSPACE_UNIX="$(cygpath -u "$GITHUB_WORKSPACE")"
+          git clone https://github.com/microsoft/vcpkg "$WORKSPACE_UNIX/vcpkg"
+          "$WORKSPACE_UNIX/vcpkg/bootstrap-vcpkg.sh"
+
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          WORKSPACE_UNIX="$(cygpath -u "$GITHUB_WORKSPACE")"
+          export VCPKG_ROOT="$WORKSPACE_UNIX/vcpkg"
+          cmake --preset windows-native-mingw-release-static \
+            -DCMAKE_C_COMPILER=gcc \
+            -DCMAKE_CXX_COMPILER=g++
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          WORKSPACE_UNIX="$(cygpath -u "$GITHUB_WORKSPACE")"
+          export VCPKG_ROOT="$WORKSPACE_UNIX/vcpkg"
+          cmake --build --preset windows-native-mingw-release-static -j
+
+      - name: Test
+        shell: msys2 {0}
+        run: |
+          WORKSPACE_UNIX="$(cygpath -u "$GITHUB_WORKSPACE")"
+          export VCPKG_ROOT="$WORKSPACE_UNIX/vcpkg"
+          ctest --preset windows-native-mingw-release-static
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-mingw-release
+          path: build/windows-native-mingw-release-static/stmanager.exe
+          if-no-files-found: warn
+
+  linux-cross-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            gcc-mingw-w64-x86-64 \
+            g++-mingw-w64-x86-64
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$GITHUB_WORKSPACE/vcpkg"
+          "$GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.sh"
+
+      - name: Configure
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: cmake --preset linux-cross-windows-x64-release
+
+      - name: Build
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: cmake --build --preset linux-cross-windows-x64-release -j
+
+      - name: Upload cross Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-cross-windows-x64-release
+          path: |
+            build/linux-cross-windows-x64-release/stmanager.exe
+            build/linux-cross-windows-x64-release/libSTManager*
+          if-no-files-found: warn
+
+  linux-cross-android-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$GITHUB_WORKSPACE/vcpkg"
+          "$GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.sh"
+
+      - name: Configure
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: cmake --preset linux-cross-android-arm64-release
+
+      - name: Build
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: cmake --build --preset linux-cross-android-arm64-release -j
+
+      - name: Upload Android arm64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-cross-android-arm64-release
+          path: |
+            build/linux-cross-android-arm64-release/libSTManager*
+            build/linux-cross-android-arm64-release/libSTManagerStatic.a
+          if-no-files-found: warn

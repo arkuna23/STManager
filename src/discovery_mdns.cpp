@@ -1,9 +1,14 @@
 #include "discovery_mdns.h"
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -14,6 +19,8 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
+
+#include "platform_compat.h"
 
 namespace STManager {
 namespace internal {
@@ -35,8 +42,21 @@ int g_responder_socket_fd = -1;
 
 Status make_io_error(const std::string& prefix) {
     std::ostringstream message_stream;
-    message_stream << prefix << ": " << std::strerror(errno);
+    message_stream << prefix << ": " << socket_last_error_message();
     return Status(StatusCode::kDiscoveryError, message_stream.str());
+}
+
+int set_socket_option_int(int socket_fd, int level, int option_name, int option_value) {
+#ifdef _WIN32
+    return setsockopt(
+        socket_fd,
+        level,
+        option_name,
+        reinterpret_cast<const char*>(&option_value),
+        static_cast<int>(sizeof(option_value)));
+#else
+    return setsockopt(socket_fd, level, option_name, &option_value, sizeof(option_value));
+#endif
 }
 
 bool parse_discovery_response_message(
@@ -159,7 +179,7 @@ void discovery_responder_loop(int socket_fd, DeviceInfo local_device) {
 
         const int select_result = select(socket_fd + 1, &read_fds, NULL, NULL, &timeout);
         if (select_result < 0) {
-            if (errno == EINTR) {
+            if (socket_error_is_interrupt()) {
                 continue;
             }
             break;
@@ -181,7 +201,7 @@ void discovery_responder_loop(int socket_fd, DeviceInfo local_device) {
             reinterpret_cast<struct sockaddr*>(&source_addr),
             &source_addr_len);
         if (read_size < 0) {
-            if (errno == EINTR) {
+            if (socket_error_is_interrupt()) {
                 continue;
             }
             continue;
@@ -210,15 +230,20 @@ Status list_mdns_devices(std::vector<DeviceInfo>* devices) {
     }
     devices->clear();
 
+    const Status runtime_status = ensure_socket_runtime();
+    if (!runtime_status.ok()) {
+        return runtime_status;
+    }
+
     const int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0) {
         return make_io_error("Failed to create discovery socket");
     }
 
     int broadcast_value = 1;
-    setsockopt(socket_fd, SOL_SOCKET, SO_BROADCAST, &broadcast_value, sizeof(broadcast_value));
+    set_socket_option_int(socket_fd, SOL_SOCKET, SO_BROADCAST, broadcast_value);
     int reuse_value = 1;
-    setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_value, sizeof(reuse_value));
+    set_socket_option_int(socket_fd, SOL_SOCKET, SO_REUSEADDR, reuse_value);
 
     struct sockaddr_in bind_addr;
     std::memset(&bind_addr, 0, sizeof(bind_addr));
@@ -227,7 +252,7 @@ Status list_mdns_devices(std::vector<DeviceInfo>* devices) {
     bind_addr.sin_port = htons(0);
     if (bind(socket_fd, reinterpret_cast<struct sockaddr*>(&bind_addr), sizeof(bind_addr)) != 0) {
         const Status bind_status = make_io_error("Failed to bind discovery socket");
-        close(socket_fd);
+        close_socket_fd(socket_fd);
         return bind_status;
     }
 
@@ -272,10 +297,10 @@ Status list_mdns_devices(std::vector<DeviceInfo>* devices) {
 
         const int select_result = select(socket_fd + 1, &read_fds, NULL, NULL, &timeout);
         if (select_result < 0) {
-            if (errno == EINTR) {
+            if (socket_error_is_interrupt()) {
                 continue;
             }
-            close(socket_fd);
+            close_socket_fd(socket_fd);
             return make_io_error("Discovery select failed");
         }
 
@@ -290,7 +315,7 @@ Status list_mdns_devices(std::vector<DeviceInfo>* devices) {
         }
     }
 
-    close(socket_fd);
+    close_socket_fd(socket_fd);
 
     for (std::map<std::string, DeviceInfo>::const_iterator it = by_device_id.begin();
          it != by_device_id.end();
@@ -309,6 +334,11 @@ Status start_discovery_responder(const DeviceInfo& local_device) {
         return Status(StatusCode::kDiscoveryError, "local device port is required for discovery responder");
     }
 
+    const Status runtime_status = ensure_socket_runtime();
+    if (!runtime_status.ok()) {
+        return runtime_status;
+    }
+
     std::lock_guard<std::mutex> lock(g_responder_mutex);
     if (g_responder_running.load()) {
         return Status(StatusCode::kDiscoveryError, "Discovery responder is already running");
@@ -320,11 +350,11 @@ Status start_discovery_responder(const DeviceInfo& local_device) {
     }
 
     int broadcast_value = 1;
-    setsockopt(socket_fd, SOL_SOCKET, SO_BROADCAST, &broadcast_value, sizeof(broadcast_value));
+    set_socket_option_int(socket_fd, SOL_SOCKET, SO_BROADCAST, broadcast_value);
     int reuse_value = 1;
-    setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_value, sizeof(reuse_value));
+    set_socket_option_int(socket_fd, SOL_SOCKET, SO_REUSEADDR, reuse_value);
 #ifdef SO_REUSEPORT
-    setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &reuse_value, sizeof(reuse_value));
+    set_socket_option_int(socket_fd, SOL_SOCKET, SO_REUSEPORT, reuse_value);
 #endif
 
     struct sockaddr_in bind_addr;
@@ -334,7 +364,7 @@ Status start_discovery_responder(const DeviceInfo& local_device) {
     bind_addr.sin_port = htons(kDiscoveryPort);
     if (bind(socket_fd, reinterpret_cast<struct sockaddr*>(&bind_addr), sizeof(bind_addr)) != 0) {
         const Status bind_status = make_io_error("Failed to bind discovery responder socket");
-        close(socket_fd);
+        close_socket_fd(socket_fd);
         return bind_status;
     }
 
@@ -344,7 +374,7 @@ Status start_discovery_responder(const DeviceInfo& local_device) {
     try {
         g_responder_thread = std::thread(discovery_responder_loop, socket_fd, local_device);
     } catch (const std::exception& exception) {
-        close(socket_fd);
+        close_socket_fd(socket_fd);
         g_responder_socket_fd = -1;
         return Status(StatusCode::kDiscoveryError, exception.what());
     }
@@ -365,7 +395,7 @@ Status stop_discovery_responder() {
     }
 
     if (g_responder_socket_fd >= 0) {
-        close(g_responder_socket_fd);
+        close_socket_fd(g_responder_socket_fd);
         g_responder_socket_fd = -1;
     }
 
