@@ -4,6 +4,7 @@
 #include <STManager/data.h>
 #include <STManager/stmanager_export.h>
 
+#include <atomic>
 #include <iosfwd>
 #include <string>
 #include <vector>
@@ -135,10 +136,20 @@ private:
     std::vector<std::string> trusted_device_ids_;
 };
 
+typedef void (*ServeSyncStartedCallback)(
+    const std::string& bound_host,
+    int bound_port,
+    void* user_context);
+
 STMANAGER_EXPORT Status serve_sync_server(const DataManager& data_manager,
                                           const std::string& local_device_id,
                                           ITrustedDeviceStore* trusted_store,
-                                          const ServerOptions& options, int* bound_port);
+                                          const ServerOptions& options,
+                                          int* bound_port,
+                                          std::string* bound_host = NULL,
+                                          const std::atomic<bool>* stop_requested = NULL,
+                                          ServeSyncStartedCallback started_callback = NULL,
+                                          void* started_context = NULL);
 
 }  // namespace STManager
 

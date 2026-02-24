@@ -70,7 +70,7 @@ cmake --build --preset linux-cross-android-arm64-release -j
 Android preset intentionally disables CLI/tests:
 - `STMANAGER_BUILD_CLI=OFF`
 - `STMANAGER_BUILD_TESTS=OFF`
-- `STMANAGER_BUILD_SHARED=OFF` (build static library target for Android)
+- `STMANAGER_BUILD_SHARED=ON` (build shared library target for Android)
 
 ### Manual Configure (without presets)
 
@@ -85,6 +85,11 @@ cmake -S . -B build/Release \
 Outputs include:
 - `build/<preset>/libSTManager.*`
 - `build/<preset>/stmanager` (when CLI is enabled)
+- `build/<preset>/artifact/stmanager/` distributable bundle:
+  - `include/STManager/*.h` (public headers)
+  - `include/STManager/stmanager_export.h`
+  - `lib/libSTManager.so` (when shared enabled)
+  - `lib/libSTManagerStatic.a`
 
 Release defaults for `stmanager`:
 - static linking enabled (`STMANAGER_CLI_STATIC_LINK=ON`)
@@ -183,9 +188,10 @@ STManager::Status create_status =
 if (create_status.ok()) {
     STManager::ServeSyncOptions options;
     options.server_options.port = 38591;
-    STManager::ServeSyncResult result;
-    // blocks until server stops
-    STManager::Status run_status = manager.serve_sync(options, &result);
+    std::unique_ptr<STManager::SyncTaskHandle> handle = manager.serve_sync(options);
+    STManager::SyncTaskInfo info = handle->info();  // device_id/local endpoint
+    // stop from another thread/signal if needed
+    STManager::Status run_status = handle->wait();
 }
 ```
 

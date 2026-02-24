@@ -4,9 +4,11 @@ project(STManager VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
 
 option(STMANAGER_CLI_STATIC_LINK "Build stmanager CLI with static linking" ON)
 option(STMANAGER_CLI_SIZE_OPTIMIZED_RELEASE "Optimize stmanager size in Release builds" ON)
+option(STMANAGER_LIBRARY_SIZE_OPTIMIZED "Optimize STManager library size in Release builds" ON)
 option(STMANAGER_BUILD_CLI "Build stmanager CLI binary" ON)
 option(STMANAGER_BUILD_TESTS "Build STManager test targets" ON)
 option(STMANAGER_BUILD_SHARED "Build shared STManager library target" ON)
@@ -14,7 +16,6 @@ option(STMANAGER_BUILD_SHARED "Build shared STManager library target" ON)
 if(ANDROID)
     set(STMANAGER_BUILD_CLI OFF CACHE BOOL "Build stmanager CLI binary" FORCE)
     set(STMANAGER_BUILD_TESTS OFF CACHE BOOL "Build STManager test targets" FORCE)
-    set(STMANAGER_BUILD_SHARED OFF CACHE BOOL "Build shared STManager library target" FORCE)
 endif()
 
 set(STMANAGER_SOURCES
@@ -133,9 +134,87 @@ endif()
 target_compile_features(STManagerStatic PUBLIC cxx_std_11)
 target_compile_definitions(STManagerStatic PUBLIC STMANAGER_STATIC_DEFINE)
 
+if(STMANAGER_LIBRARY_SIZE_OPTIMIZED AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(STMANAGER_BUILD_SHARED)
+        target_compile_options(STManager PRIVATE
+            $<$<CONFIG:Release>:-Os>
+            $<$<CONFIG:MinSizeRel>:-Os>
+            $<$<CONFIG:Release>:-g0>
+            $<$<CONFIG:MinSizeRel>:-g0>
+            $<$<CONFIG:Release>:-ffunction-sections>
+            $<$<CONFIG:MinSizeRel>:-ffunction-sections>
+            $<$<CONFIG:Release>:-fdata-sections>
+            $<$<CONFIG:MinSizeRel>:-fdata-sections>
+        )
+
+        target_link_options(STManager PRIVATE
+            $<$<CONFIG:Release>:-Wl,--gc-sections>
+            $<$<CONFIG:MinSizeRel>:-Wl,--gc-sections>
+            $<$<CONFIG:Release>:-Wl,--exclude-libs,ALL>
+            $<$<CONFIG:MinSizeRel>:-Wl,--exclude-libs,ALL>
+            $<$<CONFIG:Release>:-Wl,--strip-all>
+            $<$<CONFIG:MinSizeRel>:-Wl,--strip-all>
+        )
+    endif()
+
+    target_compile_options(STManagerStatic PRIVATE
+        $<$<CONFIG:Release>:-Os>
+        $<$<CONFIG:MinSizeRel>:-Os>
+        $<$<CONFIG:Release>:-g0>
+        $<$<CONFIG:MinSizeRel>:-g0>
+        $<$<CONFIG:Release>:-ffunction-sections>
+        $<$<CONFIG:MinSizeRel>:-ffunction-sections>
+        $<$<CONFIG:Release>:-fdata-sections>
+        $<$<CONFIG:MinSizeRel>:-fdata-sections>
+    )
+endif()
+
 set(STMANAGER_RUNTIME_LINK_TARGET STManagerStatic)
 if(STMANAGER_BUILD_SHARED)
     set(STMANAGER_RUNTIME_LINK_TARGET STManager)
+endif()
+
+set(STMANAGER_BUNDLE_DIR "${CMAKE_CURRENT_BINARY_DIR}/artifact/stmanager")
+set(STMANAGER_BUNDLE_INCLUDE_DIR "${STMANAGER_BUNDLE_DIR}/include/STManager")
+set(STMANAGER_BUNDLE_LIB_DIR "${STMANAGER_BUNDLE_DIR}/lib")
+
+if(STMANAGER_BUILD_SHARED)
+    add_custom_target(stmanager_bundle ALL
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${STMANAGER_BUNDLE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${STMANAGER_BUNDLE_INCLUDE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${STMANAGER_BUNDLE_LIB_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/STManager"
+            "${STMANAGER_BUNDLE_INCLUDE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${STMANAGER_EXPORT_H_PATH}"
+            "${STMANAGER_BUNDLE_INCLUDE_DIR}/stmanager_export.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:STManagerStatic>"
+            "${STMANAGER_BUNDLE_LIB_DIR}/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:STManager>"
+            "${STMANAGER_BUNDLE_LIB_DIR}/"
+        DEPENDS STManagerStatic STManager
+        COMMENT "Bundling STManager libraries and headers"
+    )
+else()
+    add_custom_target(stmanager_bundle ALL
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${STMANAGER_BUNDLE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${STMANAGER_BUNDLE_INCLUDE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${STMANAGER_BUNDLE_LIB_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/STManager"
+            "${STMANAGER_BUNDLE_INCLUDE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${STMANAGER_EXPORT_H_PATH}"
+            "${STMANAGER_BUNDLE_INCLUDE_DIR}/stmanager_export.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:STManagerStatic>"
+            "${STMANAGER_BUNDLE_LIB_DIR}/"
+        DEPENDS STManagerStatic
+        COMMENT "Bundling STManager libraries and headers"
+    )
 endif()
 
 if(STMANAGER_BUILD_CLI)

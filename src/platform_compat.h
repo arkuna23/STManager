@@ -11,6 +11,7 @@ namespace STManager {
 namespace internal {
 
 Status ensure_socket_runtime();
+Status current_device_name(std::string* device_name);
 
 int close_file_fd(int fd);
 int close_socket_fd(int fd);

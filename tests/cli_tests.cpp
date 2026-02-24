@@ -202,6 +202,7 @@ bool test_manager_create_from_root_creates_device_id() {
     const STManager::Status create_status = STManager::Manager::create_from_root(fixture_root, &manager);
     EXPECT_TRUE(context, create_status.ok());
     EXPECT_TRUE(context, !manager.local_device_id().empty());
+    EXPECT_TRUE(context, !manager.local_device_name().empty());
     EXPECT_TRUE(context, manager.state_dir().find(".stmanager") != std::string::npos);
     EXPECT_TRUE(context, STManagerTest::path_exists(
         STManagerTest::join_path(fixture_root, ".stmanager/device_id")));

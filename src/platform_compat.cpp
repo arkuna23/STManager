@@ -3,6 +3,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <Windows.h>
 
 #include <direct.h>
 #include <io.h>
@@ -15,6 +16,7 @@
 #endif
 
 #include <cerrno>
+#include <cctype>
 #include <cstring>
 #include <sstream>
 
@@ -38,6 +40,48 @@ Status ensure_socket_runtime() {
 #else
     return Status::ok_status();
 #endif
+}
+
+Status current_device_name(std::string* device_name) {
+    if (device_name == NULL) {
+        return Status(StatusCode::kSyncProtocolError, "device_name output cannot be null");
+    }
+
+    device_name->clear();
+
+#ifdef _WIN32
+    char host_name_buffer[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD host_name_size = static_cast<DWORD>(sizeof(host_name_buffer));
+    if (!GetComputerNameA(host_name_buffer, &host_name_size)) {
+        std::ostringstream message_stream;
+        message_stream << "GetComputerNameA failed: " << static_cast<unsigned long>(GetLastError());
+        return Status(StatusCode::kIoError, message_stream.str());
+    }
+
+    device_name->assign(host_name_buffer, static_cast<std::string::size_type>(host_name_size));
+#else
+    char host_name_buffer[256];
+    std::memset(host_name_buffer, 0, sizeof(host_name_buffer));
+    if (gethostname(host_name_buffer, sizeof(host_name_buffer) - 1) != 0) {
+        return Status(StatusCode::kIoError, std::strerror(errno));
+    }
+    host_name_buffer[sizeof(host_name_buffer) - 1] = '\0';
+    *device_name = host_name_buffer;
+#endif
+
+    while (!device_name->empty() && std::isspace(static_cast<unsigned char>((*device_name)[0])) != 0) {
+        device_name->erase(device_name->begin());
+    }
+    while (!device_name->empty() &&
+           std::isspace(static_cast<unsigned char>((*device_name)[device_name->size() - 1])) != 0) {
+        device_name->erase(device_name->end() - 1);
+    }
+
+    if (device_name->empty()) {
+        return Status(StatusCode::kIoError, "Current device name is empty");
+    }
+
+    return Status::ok_status();
 }
 
 int close_file_fd(int fd) {

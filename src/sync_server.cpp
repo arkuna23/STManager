@@ -19,7 +19,6 @@
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
-#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -27,32 +26,6 @@
 
 namespace STManager {
 namespace {
-
-volatile sig_atomic_t g_stop_server = 0;
-
-void handle_sigint(int) {
-    g_stop_server = 1;
-}
-
-class SignalScope {
-public:
-    SignalScope() : previous_handler_(SIG_ERR), has_previous_(false) {
-        g_stop_server = 0;
-        previous_handler_ = std::signal(SIGINT, handle_sigint);
-        has_previous_ = previous_handler_ != SIG_ERR;
-    }
-
-    ~SignalScope() {
-        if (has_previous_) {
-            std::signal(SIGINT, previous_handler_);
-        }
-    }
-
-private:
-    typedef void (*SignalHandler)(int);
-    SignalHandler previous_handler_;
-    bool has_previous_;
-};
 
 class DiscoveryResponderScope {
 public:
@@ -422,7 +395,76 @@ std::string port_to_string(int port) {
     return out.str();
 }
 
-Status create_listen_socket(const ServerOptions& options, int* listen_fd, int* bound_port) {
+bool is_wildcard_bind_host(const std::string& host) {
+    return host.empty() || host == "0.0.0.0" || host == "::" || host == "[::]";
+}
+
+bool sockaddr_to_ip(
+    const struct sockaddr_storage& socket_addr,
+    socklen_t socket_addr_len,
+    std::string* ip_text) {
+    if (ip_text == NULL) {
+        return false;
+    }
+
+    char host_buffer[INET6_ADDRSTRLEN];
+    std::memset(host_buffer, 0, sizeof(host_buffer));
+    if (getnameinfo(
+            reinterpret_cast<const struct sockaddr*>(&socket_addr),
+            socket_addr_len,
+            host_buffer,
+            static_cast<socklen_t>(sizeof(host_buffer)),
+            NULL,
+            0,
+            NI_NUMERICHOST) != 0) {
+        return false;
+    }
+
+    *ip_text = host_buffer;
+    return !ip_text->empty();
+}
+
+bool detect_local_reachable_ipv4(std::string* local_ip) {
+    if (local_ip == NULL) {
+        return false;
+    }
+
+    const int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (socket_fd < 0) {
+        return false;
+    }
+
+    struct sockaddr_in remote_addr;
+    std::memset(&remote_addr, 0, sizeof(remote_addr));
+    remote_addr.sin_family = AF_INET;
+    remote_addr.sin_port = htons(53);
+    remote_addr.sin_addr.s_addr = htonl(0x08080808U);
+
+    if (connect(socket_fd, reinterpret_cast<const struct sockaddr*>(&remote_addr), sizeof(remote_addr)) != 0) {
+        internal::close_socket_fd(socket_fd);
+        return false;
+    }
+
+    struct sockaddr_storage local_addr;
+    std::memset(&local_addr, 0, sizeof(local_addr));
+    socklen_t local_addr_len = sizeof(local_addr);
+    const int get_name_status = getsockname(
+        socket_fd,
+        reinterpret_cast<struct sockaddr*>(&local_addr),
+        &local_addr_len);
+    internal::close_socket_fd(socket_fd);
+
+    if (get_name_status != 0) {
+        return false;
+    }
+    return sockaddr_to_ip(local_addr, local_addr_len, local_ip);
+}
+
+Status create_listen_socket(
+    const ServerOptions& options,
+    int* listen_fd,
+    int* bound_port,
+    std::string* bound_host) {
     struct addrinfo hints;
     std::memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -480,8 +522,19 @@ Status create_listen_socket(const ServerOptions& options, int* listen_fd, int* b
             actual_port = ntohs(ipv6_addr->sin6_port);
         }
 
+        std::string actual_host;
+        if (!sockaddr_to_ip(local_addr, local_addr_len, &actual_host) || is_wildcard_bind_host(actual_host)) {
+            actual_host = options.bind_host;
+        }
+        if (is_wildcard_bind_host(actual_host) && !detect_local_reachable_ipv4(&actual_host)) {
+            actual_host = "127.0.0.1";
+        }
+
         *listen_fd = candidate_fd;
         *bound_port = actual_port;
+        if (bound_host != NULL) {
+            *bound_host = actual_host;
+        }
         freeaddrinfo(resolved_addrs);
         return Status::ok_status();
     }
@@ -497,7 +550,11 @@ Status serve_sync_server(
     const std::string& local_device_id,
     ITrustedDeviceStore* trusted_store,
     const ServerOptions& options,
-    int* bound_port) {
+    int* bound_port,
+    std::string* bound_host,
+    const std::atomic<bool>* stop_requested,
+    ServeSyncStartedCallback started_callback,
+    void* started_context) {
     if (!data_manager.is_valid()) {
         return data_manager.last_status();
     }
@@ -507,6 +564,9 @@ Status serve_sync_server(
     if (bound_port == NULL) {
         return Status(StatusCode::kSyncProtocolError, "bound_port output cannot be null");
     }
+    if (bound_host != NULL) {
+        bound_host->clear();
+    }
 
     const Status runtime_status = internal::ensure_socket_runtime();
     if (!runtime_status.ok()) {
@@ -515,11 +575,19 @@ Status serve_sync_server(
 
     int listen_fd = -1;
     int actual_port = 0;
-    const Status listen_status = create_listen_socket(options, &listen_fd, &actual_port);
+    std::string actual_host;
+    const Status listen_status =
+        create_listen_socket(options, &listen_fd, &actual_port, &actual_host);
     if (!listen_status.ok()) {
         return listen_status;
     }
     *bound_port = actual_port;
+    if (bound_host != NULL) {
+        *bound_host = actual_host;
+    }
+    if (started_callback != NULL) {
+        started_callback(actual_host, actual_port, started_context);
+    }
 
     DiscoveryResponderScope discovery_responder_scope;
     if (options.advertise) {
@@ -529,7 +597,7 @@ Status serve_sync_server(
         const Status discovery_start_status = discovery_responder_scope.start(
             local_device_id,
             advertise_name,
-            std::string(),
+            actual_host,
             actual_port);
         if (!discovery_start_status.ok()) {
             internal::close_socket_fd(listen_fd);
@@ -537,8 +605,11 @@ Status serve_sync_server(
         }
     }
 
-    SignalScope signal_scope;
-    while (!g_stop_server) {
+    while (true) {
+        if (stop_requested != NULL && stop_requested->load()) {
+            break;
+        }
+
         const int select_result = wait_for_socket_readable(listen_fd, 500);
         if (select_result < 0) {
             if (internal::socket_error_is_interrupt()) {
@@ -558,7 +629,7 @@ Status serve_sync_server(
             reinterpret_cast<struct sockaddr*>(&client_addr),
             &client_addr_len);
         if (client_fd < 0) {
-            if (internal::socket_error_is_interrupt() && g_stop_server) {
+            if (stop_requested != NULL && stop_requested->load()) {
                 break;
             }
             if (internal::socket_error_is_interrupt()) {

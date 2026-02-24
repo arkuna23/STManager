@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
@@ -28,7 +29,6 @@ using STManager::Manager;
 using STManager::PairingOptions;
 using STManager::PairSyncOptions;
 using STManager::PairSyncRequest;
-using STManager::PairSyncResult;
 using STManager::RestoreBackupOptions;
 using STManager::Status;
 using STManager::StatusCode;
@@ -855,6 +855,7 @@ bool test_manager_create_from_root_creates_state() {
     EXPECT_TRUE(context, create_status.ok());
     EXPECT_EQ(context, manager.root_path(), root);
     EXPECT_TRUE(context, !manager.local_device_id().empty());
+    EXPECT_TRUE(context, !manager.local_device_name().empty());
     EXPECT_TRUE(context, STManagerTest::path_exists(
         STManagerTest::join_path(root, ".stmanager/device_id")));
     EXPECT_TRUE(context, manager.state_dir().find(".stmanager") != std::string::npos);
@@ -924,10 +925,15 @@ bool test_manager_pair_sync_rejects_invalid_remote_endpoint() {
     remote_device.port = 38591;
 
     PairSyncOptions options;
-    PairSyncResult result;
-    const Status pair_status = manager.pair_sync(remote_device, options, &result);
+    std::unique_ptr<STManager::SyncTaskHandle> pair_handle = manager.pair_sync(remote_device, options);
+    EXPECT_TRUE(context, pair_handle.get() != NULL);
+
+    const Status pair_status = pair_handle->wait();
     EXPECT_TRUE(context, !pair_status.ok());
     EXPECT_EQ(context, static_cast<int>(pair_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+    EXPECT_TRUE(
+        context,
+        static_cast<int>(pair_handle->state()) == static_cast<int>(STManager::SyncTaskState::kFinished));
 
     return context.failed_assertions == 0;
 }

@@ -4,10 +4,14 @@
 #include <STManager/tcp_transport.h>
 
 #include "test_helpers.h"
+#include "../src/platform_compat.h"
 
 #include <iostream>
+#include <chrono>
 #include <sstream>
 #include <string>
+#include <memory>
+#include <thread>
 
 using STManager::DataManager;
 using STManager::ExportBackupOptions;
@@ -104,6 +108,16 @@ bool test_tcp_transport_fails_when_disconnected() {
     return context.failed_assertions == 0;
 }
 
+bool test_current_device_name_resolves_non_empty_name() {
+    TestContext context;
+
+    std::string device_name;
+    const Status device_name_status = STManager::internal::current_device_name(&device_name);
+    EXPECT_TRUE(context, device_name_status.ok());
+    EXPECT_TRUE(context, !device_name.empty());
+    return context.failed_assertions == 0;
+}
+
 bool test_serve_sync_server_rejects_invalid_data_manager() {
     TestContext context;
 
@@ -189,10 +203,10 @@ bool test_manager_create_from_root_rejects_invalid_root() {
     return context.failed_assertions == 0;
 }
 
-bool test_manager_serve_sync_rejects_null_result() {
+bool test_manager_serve_sync_returns_stoppable_handle() {
     TestContext context;
 
-    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-serve-null-result");
+    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-serve-handle");
     EXPECT_TRUE(context, !root_path.empty());
 
     Manager manager;
@@ -200,11 +214,36 @@ bool test_manager_serve_sync_rejects_null_result() {
     EXPECT_TRUE(context, create_status.ok());
 
     ServeSyncOptions options;
+    options.server_options.bind_host = "127.0.0.1";
     options.server_options.advertise = false;
     options.server_options.port = 0;
-    const Status run_status = manager.serve_sync(options, NULL);
-    EXPECT_TRUE(context, !run_status.ok());
-    EXPECT_EQ(context, static_cast<int>(run_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+
+    std::unique_ptr<STManager::SyncTaskHandle> task_handle = manager.serve_sync(options);
+    EXPECT_TRUE(context, task_handle.get() != NULL);
+
+    for (int attempt = 0; attempt < 50 && task_handle->is_running(); ++attempt) {
+        const STManager::SyncTaskInfo task_info = task_handle->info();
+        if (task_info.local_port > 0) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    const STManager::SyncTaskInfo task_info = task_handle->info();
+    EXPECT_TRUE(context, !task_info.device_id.empty());
+    EXPECT_TRUE(
+        context,
+        static_cast<int>(task_info.mode) == static_cast<int>(STManager::SyncTaskMode::kServe));
+
+    task_handle->stop();
+    const Status wait_status = task_handle->wait();
+    EXPECT_TRUE(
+        context,
+        wait_status.ok() ||
+            static_cast<int>(wait_status.code) == static_cast<int>(StatusCode::kSyncProtocolError));
+    EXPECT_TRUE(
+        context,
+        static_cast<int>(task_handle->state()) == static_cast<int>(STManager::SyncTaskState::kFinished));
 
     STManagerTest::remove_directory_recursive(root_path);
     return context.failed_assertions == 0;
@@ -267,11 +306,12 @@ int main() {
     const TestCase test_cases[] = {
         {"tcp_transport_rejects_invalid_connect_args", test_tcp_transport_rejects_invalid_connect_args},
         {"tcp_transport_fails_when_disconnected", test_tcp_transport_fails_when_disconnected},
+        {"current_device_name_resolves_non_empty_name", test_current_device_name_resolves_non_empty_name},
         {"serve_sync_server_rejects_invalid_data_manager", test_serve_sync_server_rejects_invalid_data_manager},
         {"serve_sync_server_rejects_empty_local_device_id", test_serve_sync_server_rejects_empty_local_device_id},
         {"serve_sync_server_rejects_null_bound_port", test_serve_sync_server_rejects_null_bound_port},
         {"manager_create_from_root_rejects_invalid_root", test_manager_create_from_root_rejects_invalid_root},
-        {"manager_serve_sync_rejects_null_result", test_manager_serve_sync_rejects_null_result},
+        {"manager_serve_sync_returns_stoppable_handle", test_manager_serve_sync_returns_stoppable_handle},
         {"manager_export_backup_rejects_null_result", test_manager_export_backup_rejects_null_result},
         {"manager_restore_backup_rejects_empty_file_path", test_manager_restore_backup_rejects_empty_file_path},
     };

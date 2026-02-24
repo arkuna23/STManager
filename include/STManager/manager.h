@@ -4,11 +4,26 @@
 #include <STManager/sync.h>
 
 #include <cstdint>
+#include <memory>
 
 namespace STManager {
 
 struct ServeSyncOptions {
     ServerOptions server_options;
+
+    ServeSyncOptions(
+        const std::string& bind_host_in = "0.0.0.0",
+        int port_in = 0,
+        const std::string& pairing_code_in = std::string(),
+        bool advertise_in = true,
+        const std::string& advertise_name_in = std::string())
+        : server_options() {
+        server_options.bind_host = bind_host_in;
+        server_options.port = port_in;
+        server_options.pairing_code = pairing_code_in;
+        server_options.advertise = advertise_in;
+        server_options.advertise_name = advertise_name_in;
+    }
 };
 
 struct ServeSyncResult {
@@ -28,6 +43,18 @@ struct PairSyncRequest {
 struct PairSyncOptions {
     PairingOptions pairing_options;
     SyncOptions sync_options;
+
+    PairSyncOptions(
+        const std::string& pairing_code_in = std::string(),
+        bool remember_device_in = true,
+        const std::string& destination_root_override_in = std::string(),
+        const BackupOptions& backup_options_in = BackupOptions())
+        : pairing_options(), sync_options() {
+        pairing_options.pairing_code = pairing_code_in;
+        pairing_options.remember_device = remember_device_in;
+        sync_options.destination_root_override = destination_root_override_in;
+        sync_options.backup_options = backup_options_in;
+    }
 };
 
 struct PairSyncResult {
@@ -57,6 +84,57 @@ struct RestoreBackupOptions {
     RestoreBackupOptions() : file_path("st-backup.tar.zst") {}
 };
 
+enum class SyncTaskMode {
+    kServe = 0,
+    kPair,
+};
+
+enum class SyncTaskState {
+    kStarting = 0,
+    kRunning,
+    kStopping,
+    kFinished,
+};
+
+struct SyncTaskInfo {
+    std::string device_id;
+    std::string local_ip;
+    int local_port;
+    SyncTaskMode mode;
+
+    SyncTaskInfo()
+        : device_id(),
+          local_ip(),
+          local_port(0),
+          mode(SyncTaskMode::kServe) {}
+};
+
+class STMANAGER_EXPORT SyncTaskHandle {
+public:
+    class Impl;
+
+    SyncTaskHandle();
+    ~SyncTaskHandle();
+
+    SyncTaskHandle(const SyncTaskHandle&) = delete;
+    SyncTaskHandle& operator=(const SyncTaskHandle&) = delete;
+
+    SyncTaskHandle(SyncTaskHandle&& other);
+    SyncTaskHandle& operator=(SyncTaskHandle&& other);
+    explicit SyncTaskHandle(const std::shared_ptr<Impl>& impl);
+
+    void stop();
+    Status wait();
+
+    SyncTaskState state() const;
+    Status last_status() const;
+    SyncTaskInfo info() const;
+    bool is_running() const;
+
+private:
+    std::shared_ptr<Impl> impl_;
+};
+
 class STMANAGER_EXPORT Manager {
 public:
     Manager();
@@ -65,6 +143,7 @@ public:
 
     const std::string& root_path() const;
     const std::string& local_device_id() const;
+    const std::string& local_device_name() const;
     const std::string& state_dir() const;
 
     Status discover_devices(std::vector<DeviceInfo>* devices) const;
@@ -73,11 +152,11 @@ public:
         std::vector<DeviceInfo>* candidates,
         DeviceInfo* auto_selected) const;
 
-    Status serve_sync(const ServeSyncOptions& options, ServeSyncResult* result) const;
-    Status pair_sync(
+    std::unique_ptr<SyncTaskHandle> serve_sync(
+        const ServeSyncOptions& options = ServeSyncOptions()) const;
+    std::unique_ptr<SyncTaskHandle> pair_sync(
         const DeviceInfo& device_info,
-        const PairSyncOptions& options,
-        PairSyncResult* result) const;
+        const PairSyncOptions& options = PairSyncOptions()) const;
     Status export_backup(const ExportBackupOptions& options, ExportBackupResult* result) const;
     Status restore_backup(const RestoreBackupOptions& options) const;
 
@@ -88,6 +167,7 @@ private:
     DataManager data_manager_;
     std::string state_dir_;
     std::string local_device_id_;
+    std::string local_device_name_;
     std::string trusted_store_path_;
     bool initialized_;
 };

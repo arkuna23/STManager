@@ -218,7 +218,7 @@ std::string int_to_string(int value) {
 
 }  // namespace
 
-TcpSyncTransport::TcpSyncTransport() : socket_fd_(-1) {}
+TcpSyncTransport::TcpSyncTransport() : socket_fd_(-1), local_host_(), local_port_(0) {}
 
 TcpSyncTransport::~TcpSyncTransport() {
     disconnect();
@@ -262,6 +262,45 @@ Status TcpSyncTransport::connect(const DeviceInfo& device_info) {
 
         if (::connect(candidate_fd, addr->ai_addr, addr->ai_addrlen) == 0) {
             socket_fd_ = candidate_fd;
+
+            struct sockaddr_storage local_addr;
+            std::memset(&local_addr, 0, sizeof(local_addr));
+            socklen_t local_addr_len = sizeof(local_addr);
+            if (getsockname(
+                    socket_fd_,
+                    reinterpret_cast<struct sockaddr*>(&local_addr),
+                    &local_addr_len) == 0) {
+                char host_buffer[INET6_ADDRSTRLEN];
+                std::memset(host_buffer, 0, sizeof(host_buffer));
+                if (getnameinfo(
+                        reinterpret_cast<const struct sockaddr*>(&local_addr),
+                        local_addr_len,
+                        host_buffer,
+                        static_cast<socklen_t>(sizeof(host_buffer)),
+                        NULL,
+                        0,
+                        NI_NUMERICHOST) == 0) {
+                    local_host_ = host_buffer;
+                } else {
+                    local_host_.clear();
+                }
+
+                if (local_addr.ss_family == AF_INET) {
+                    const struct sockaddr_in* ipv4_addr =
+                        reinterpret_cast<const struct sockaddr_in*>(&local_addr);
+                    local_port_ = static_cast<int>(ntohs(ipv4_addr->sin_port));
+                } else if (local_addr.ss_family == AF_INET6) {
+                    const struct sockaddr_in6* ipv6_addr =
+                        reinterpret_cast<const struct sockaddr_in6*>(&local_addr);
+                    local_port_ = static_cast<int>(ntohs(ipv6_addr->sin6_port));
+                } else {
+                    local_port_ = 0;
+                }
+            } else {
+                local_host_.clear();
+                local_port_ = 0;
+            }
+
             freeaddrinfo(resolved_addrs);
             return Status::ok_status();
         }
@@ -279,6 +318,16 @@ Status TcpSyncTransport::disconnect() {
         internal::close_socket_fd(socket_fd_);
         socket_fd_ = -1;
     }
+    return Status::ok_status();
+}
+
+Status TcpSyncTransport::local_endpoint(std::string* host, int* port) const {
+    if (host == NULL || port == NULL) {
+        return Status(StatusCode::kSyncProtocolError, "host and port outputs cannot be null");
+    }
+
+    *host = local_host_;
+    *port = local_port_;
     return Status::ok_status();
 }
 

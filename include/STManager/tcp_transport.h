@@ -20,8 +20,12 @@ public:
     Status send_stream(std::istream& in) override;
     Status receive_stream(std::ostream& out) override;
 
+    Status local_endpoint(std::string* host, int* port) const;
+
 private:
     int socket_fd_;
+    std::string local_host_;
+    int local_port_;
 };
 
 }  // namespace STManager

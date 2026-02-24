@@ -6,7 +6,11 @@
 #include "cli_state.h"
 
 #include <iostream>
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -14,6 +18,32 @@ namespace {
 void print_status_error(const STManager::Status& status) {
     std::cerr << "Error: " << status.message << "\n";
 }
+
+std::atomic<bool> g_interrupt_requested(false);
+
+void handle_sigint(int) {
+    g_interrupt_requested.store(true);
+}
+
+class SignalScope {
+public:
+    SignalScope() : previous_handler_(SIG_ERR), has_previous_(false) {
+        g_interrupt_requested.store(false);
+        previous_handler_ = std::signal(SIGINT, handle_sigint);
+        has_previous_ = previous_handler_ != SIG_ERR;
+    }
+
+    ~SignalScope() {
+        if (has_previous_) {
+            std::signal(SIGINT, previous_handler_);
+        }
+    }
+
+private:
+    typedef void (*SignalHandler)(int);
+    SignalHandler previous_handler_;
+    bool has_previous_;
+};
 
 bool is_option_token(const char* token) {
     return token != NULL && token[0] == '-';
@@ -155,24 +185,48 @@ int serve_backup_command(const STManagerCli::ServeBackupArgs& args) {
     serve_sync_options.server_options.port = args.port;
     serve_sync_options.server_options.pairing_code = args.pairing_code;
     serve_sync_options.server_options.advertise = args.advertise;
-    serve_sync_options.server_options.advertise_name = manager.local_device_id();
 
     std::cout << "Starting sync server on " << serve_sync_options.server_options.bind_host
               << ":" << serve_sync_options.server_options.port
               << " (device_id=" << manager.local_device_id() << ")\n";
 
-    STManager::ServeSyncResult serve_sync_result;
-    const STManager::Status serve_status =
-        manager.serve_sync(serve_sync_options, &serve_sync_result);
+    std::unique_ptr<STManager::SyncTaskHandle> serve_handle = manager.serve_sync(serve_sync_options);
+    if (!serve_handle.get()) {
+        std::cerr << "Error: failed creating serve sync task handle\n";
+        return 1;
+    }
+
+    SignalScope signal_scope;
+    bool printed_runtime_info = false;
+    STManager::SyncTaskInfo latest_info = serve_handle->info();
+    while (serve_handle->is_running()) {
+        latest_info = serve_handle->info();
+        if (!printed_runtime_info && latest_info.local_port > 0) {
+            std::cout << "Server running on " << latest_info.local_ip
+                      << ":" << latest_info.local_port
+                      << " (device_id=" << latest_info.device_id << ")\n";
+            printed_runtime_info = true;
+        }
+
+        if (g_interrupt_requested.load()) {
+            serve_handle->stop();
+            g_interrupt_requested.store(false);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    const STManager::Status serve_status = serve_handle->wait();
     if (!serve_status.ok()) {
         print_status_error(serve_status);
         return 1;
     }
 
+    latest_info = serve_handle->info();
     std::cout << "Server stopped.\n";
     std::cout << "Root: " << root_path << "\n";
-    std::cout << "Device ID: " << manager.local_device_id() << "\n";
-    std::cout << "Bound port: " << serve_sync_result.bound_port << "\n";
+    std::cout << "Device ID: " << latest_info.device_id << "\n";
+    std::cout << "Bound host: " << latest_info.local_ip << "\n";
+    std::cout << "Bound port: " << latest_info.local_port << "\n";
     return 0;
 }
 
@@ -202,18 +256,33 @@ int pair_restore_command(const STManagerCli::PairRestoreArgs& args) {
     pair_sync_options.pairing_options.remember_device = true;
     pair_sync_options.sync_options.destination_root_override = args.destination_root;
 
-    STManager::PairSyncResult pair_sync_result;
-    const STManager::Status pair_sync_status = manager.pair_sync(
-        remote_device,
-        pair_sync_options,
-        &pair_sync_result);
+    std::unique_ptr<STManager::SyncTaskHandle> pair_handle =
+        manager.pair_sync(remote_device, pair_sync_options);
+    if (!pair_handle.get()) {
+        std::cerr << "Error: failed creating pair sync task handle\n";
+        return 1;
+    }
+
+    SignalScope signal_scope;
+    while (pair_handle->is_running()) {
+        if (g_interrupt_requested.load()) {
+            pair_handle->stop();
+            g_interrupt_requested.store(false);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    const STManager::Status pair_sync_status = pair_handle->wait();
     if (!pair_sync_status.ok()) {
         print_status_error(pair_sync_status);
         return 1;
     }
 
-    std::cout << "Restore completed from device " << pair_sync_result.selected_device.device_id
-              << ".\n";
+    const STManager::SyncTaskInfo pair_info = pair_handle->info();
+    std::cout << "Restore completed from device " << remote_device.device_id << ".\n";
+    if (!pair_info.local_ip.empty() && pair_info.local_port > 0) {
+        std::cout << "Local endpoint: " << pair_info.local_ip << ":" << pair_info.local_port << "\n";
+    }
     return 0;
 }
 
