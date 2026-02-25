@@ -56,6 +56,17 @@ bool is_symlink(mode_t mode) {
     return mode_is_symlink(mode);
 }
 
+bool is_safe_extension_name(const std::string& extension_name) {
+    if (extension_name.empty() || extension_name == "." || extension_name == "..") {
+        return false;
+    }
+    if (extension_name.find('/') != std::string::npos ||
+        extension_name.find('\\') != std::string::npos) {
+        return false;
+    }
+    return true;
+}
+
 Status make_io_error(const std::string& action, const std::string& path) {
     std::ostringstream message;
     message << action << " failed for path " << path << ": " << std::strerror(errno);
@@ -407,6 +418,76 @@ Status resolve_restore_target_paths(const std::string& destination_root,
     return Status::ok_status();
 }
 
+Status resolve_ignored_extension_names(
+    const RestoreOptions& options,
+    std::set<std::string>* ignored_extension_names) {
+    if (ignored_extension_names == NULL) {
+        return Status(StatusCode::kSyncProtocolError, "ignored extension names output cannot be null");
+    }
+
+    ignored_extension_names->clear();
+    for (std::vector<std::string>::const_iterator it = options.ignored_extension_names.begin();
+         it != options.ignored_extension_names.end();
+         ++it) {
+        if (!is_safe_extension_name(*it)) {
+            return Status(StatusCode::kSyncProtocolError, "Invalid ignored extension name: " + *it);
+        }
+        ignored_extension_names->insert(*it);
+    }
+
+    return Status::ok_status();
+}
+
+Status remove_ignored_extensions_from_staged_directory(
+    const std::string& staged_extensions_path,
+    const std::set<std::string>& ignored_extension_names) {
+    for (std::set<std::string>::const_iterator it = ignored_extension_names.begin();
+         it != ignored_extension_names.end();
+         ++it) {
+        const std::string staged_extension_path = join_path(staged_extensions_path, *it);
+        if (!path_exists(staged_extension_path)) {
+            continue;
+        }
+
+        const Status remove_status = remove_path_recursive(staged_extension_path);
+        if (!remove_status.ok()) {
+            return remove_status;
+        }
+    }
+
+    return Status::ok_status();
+}
+
+Status restore_ignored_extensions_from_backup(
+    const std::string& backup_extensions_path,
+    const std::string& target_extensions_path,
+    const std::set<std::string>& ignored_extension_names) {
+    for (std::set<std::string>::const_iterator it = ignored_extension_names.begin();
+         it != ignored_extension_names.end();
+         ++it) {
+        const std::string backup_extension_path = join_path(backup_extensions_path, *it);
+        if (!path_exists(backup_extension_path)) {
+            continue;
+        }
+
+        const std::string target_extension_path = join_path(target_extensions_path, *it);
+        if (path_exists(target_extension_path)) {
+            const Status remove_status = remove_path_recursive(target_extension_path);
+            if (!remove_status.ok()) {
+                return remove_status;
+            }
+        }
+
+        const Status restore_status =
+            copy_path_recursive(backup_extension_path, target_extension_path);
+        if (!restore_status.ok()) {
+            return restore_status;
+        }
+    }
+
+    return Status::ok_status();
+}
+
 Status extract_archive_to_directory(struct archive* archive_reader,
                                     const std::string& destination_root) {
     struct archive_entry* archive_entry = NULL;
@@ -515,8 +596,10 @@ Status restore_git_manifest(const std::string& stage_root, const std::string& de
     return Status::ok_status();
 }
 
-Status restore_from_staging_directory(const std::string& stage_root,
-                                      const std::string& destination_root) {
+Status restore_from_staging_directory(
+    const std::string& stage_root,
+    const std::string& destination_root,
+    const RestoreOptions& options) {
     const std::string staged_data_path = join_path(stage_root, "data");
     if (!path_is_directory(staged_data_path)) {
         return Status(StatusCode::kInvalidArchiveEntry,
@@ -540,6 +623,12 @@ Status restore_from_staging_directory(const std::string& stage_root,
         join_path(stage_root, ".stmanager-restore-old-extensions");
     const bool had_existing_data = path_exists(target_paths.data_path);
     const bool had_existing_extensions = path_exists(target_paths.extensions_path);
+    std::set<std::string> ignored_extension_names;
+    const Status ignored_names_status =
+        resolve_ignored_extension_names(options, &ignored_extension_names);
+    if (!ignored_names_status.ok()) {
+        return ignored_names_status;
+    }
 
     if (had_existing_data) {
         const Status backup_data_status =
@@ -584,6 +673,21 @@ Status restore_from_staging_directory(const std::string& stage_root,
     }
     installed_data = true;
 
+    const Status remove_ignored_from_staged_status =
+        remove_ignored_extensions_from_staged_directory(
+            staged_extensions_path,
+            ignored_extension_names);
+    if (!remove_ignored_from_staged_status.ok()) {
+        const Status rollback_status = rollback_restore_targets(
+            target_paths, backup_data_path, backup_extensions_path, had_existing_data,
+            had_existing_extensions, installed_data, installed_extensions);
+        if (!rollback_status.ok()) {
+            return Status(StatusCode::kIoError, remove_ignored_from_staged_status.message +
+                                                    "; rollback failed: " + rollback_status.message);
+        }
+        return remove_ignored_from_staged_status;
+    }
+
     const Status install_extensions_status =
         move_or_copy_path(staged_extensions_path, target_paths.extensions_path);
     if (!install_extensions_status.ok()) {
@@ -599,6 +703,26 @@ Status restore_from_staging_directory(const std::string& stage_root,
         return install_extensions_status;
     }
     installed_extensions = true;
+
+    if (had_existing_extensions && !ignored_extension_names.empty()) {
+        const Status restore_ignored_extensions_status =
+            restore_ignored_extensions_from_backup(
+                backup_extensions_path,
+                target_paths.extensions_path,
+                ignored_extension_names);
+        if (!restore_ignored_extensions_status.ok()) {
+            const Status rollback_status = rollback_restore_targets(
+                target_paths, backup_data_path, backup_extensions_path, had_existing_data,
+                had_existing_extensions, installed_data, installed_extensions);
+            if (!rollback_status.ok()) {
+                return Status(
+                    StatusCode::kIoError,
+                    restore_ignored_extensions_status.message +
+                        "; rollback failed: " + rollback_status.message);
+            }
+            return restore_ignored_extensions_status;
+        }
+    }
 
     const Status manifest_status = restore_git_manifest(stage_root, destination_root);
     if (!manifest_status.ok()) {
@@ -776,7 +900,10 @@ Status validate_backup_archive(std::istream& in) {
     return Status::ok_status();
 }
 
-Status restore_backup_archive(std::istream& in, const std::string& destination_root) {
+Status restore_backup_archive(
+    std::istream& in,
+    const std::string& destination_root,
+    const RestoreOptions& options) {
     if (destination_root.empty()) {
         return Status(StatusCode::kInvalidRoot, "Restore destination root cannot be empty");
     }
@@ -841,7 +968,7 @@ Status restore_backup_archive(std::istream& in, const std::string& destination_r
 
     archive_read_free(archive_reader);
 
-    const Status restore_status = restore_from_staging_directory(stage_root, destination_root);
+    const Status restore_status = restore_from_staging_directory(stage_root, destination_root, options);
     const Status cleanup_status = remove_path_recursive(stage_root);
     if (!restore_status.ok()) {
         return restore_status;

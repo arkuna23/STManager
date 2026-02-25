@@ -4,11 +4,11 @@
 #include <archive.h>
 #include <archive_entry.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
-#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
@@ -29,7 +29,9 @@ using STManager::Manager;
 using STManager::PairingOptions;
 using STManager::PairSyncOptions;
 using STManager::PairSyncRequest;
+using STManager::PairSyncResult;
 using STManager::RestoreBackupOptions;
+using STManager::RestoreOptions;
 using STManager::Status;
 using STManager::StatusCode;
 using STManager::SyncDirection;
@@ -349,6 +351,25 @@ std::string create_valid_archive_bytes(const std::vector<ArchiveFileEntry>& file
     const std::string archive_bytes = STManagerTest::read_file(archive_path);
     STManagerTest::remove_directory_recursive(temp_dir);
     return archive_bytes;
+}
+
+std::set<std::string> expected_default_ignored_extensions() {
+    std::set<std::string> extension_names;
+    extension_names.insert("assets");
+    extension_names.insert("attachments");
+    extension_names.insert("caption");
+    extension_names.insert("connection-manager");
+    extension_names.insert("expressions");
+    extension_names.insert("gallery");
+    extension_names.insert("memory");
+    extension_names.insert("quick-reply");
+    extension_names.insert("regex");
+    extension_names.insert("stable-diffusion");
+    extension_names.insert("token-counter");
+    extension_names.insert("translate");
+    extension_names.insert("tts");
+    extension_names.insert("vectors");
+    return extension_names;
 }
 
 bool test_locate_success_with_required_dirs() {
@@ -689,6 +710,61 @@ bool test_restore_to_sillytavern_layout_replaces_public_extensions() {
     return context.failed_assertions == 0;
 }
 
+bool test_restore_with_ignored_extensions_preserves_local_content() {
+    TestContext context;
+
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("restore-ignore-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("restore-ignore-dst");
+    TempDirGuard source_guard(source_root);
+    TempDirGuard restore_guard(restore_root);
+
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(restore_root, "data/local.json"),
+                             "{\"local\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 restore_root, "public/scripts/extensions/ext-keep/main.js"),
+                             "keep-local"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 restore_root, "public/scripts/extensions/ext-delete/main.js"),
+                             "delete-local"));
+
+    const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {"data/new.json", "{\"remote\":true}"},
+        {"extensions/ext-keep/main.js", "keep-remote"},
+        {"extensions/ext-fresh/main.js", "fresh-remote"},
+    });
+    EXPECT_TRUE(context, !archive_bytes.empty());
+
+    const DataManager manager = DataManager::locate(source_root);
+    EXPECT_TRUE(context, manager.is_valid());
+
+    std::stringstream archive_stream(std::ios::in | std::ios::out | std::ios::binary);
+    archive_stream.write(archive_bytes.data(), static_cast<std::streamsize>(archive_bytes.size()));
+    archive_stream.clear();
+    archive_stream.seekg(0, std::ios::beg);
+
+    RestoreOptions restore_options;
+    restore_options.ignored_extension_names.push_back("ext-keep");
+    EXPECT_STATUS_OK(context, manager.restore(archive_stream, restore_root, restore_options));
+
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/ext-keep/main.js")),
+              "keep-local");
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/ext-fresh/main.js")),
+              "fresh-remote");
+    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(
+                             restore_root, "public/scripts/extensions/ext-delete/main.js")));
+
+    return context.failed_assertions == 0;
+}
+
 bool test_sync_push_requires_trusted_device() {
     TestContext context;
 
@@ -814,6 +890,71 @@ bool test_sync_pull_restores_to_override_root() {
     return context.failed_assertions == 0;
 }
 
+bool test_sync_pull_ignored_extensions_are_preserved() {
+    TestContext context;
+
+    const std::string local_root =
+        STManagerTest::create_sillytavern_fixture("sync-pull-ignore-local");
+    const std::string override_root =
+        STManagerTest::create_sillytavern_fixture("sync-pull-ignore-override");
+    TempDirGuard local_guard(local_root);
+    TempDirGuard override_guard(override_root);
+
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 override_root, "public/scripts/extensions/ext-local/main.js"),
+                             "local-content"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 override_root, "public/scripts/extensions/ext-legacy/main.js"),
+                             "legacy-content"));
+
+    const std::string backup_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {"data/history.json", "pull payload"},
+        {"extensions/ext-local/main.js", "remote-overwrite"},
+        {"extensions/ext-added/main.js", "remote-added"},
+    });
+    EXPECT_TRUE(context, !backup_bytes.empty());
+
+    const DataManager local_manager = DataManager::locate(local_root);
+    FakeTransport transport;
+    FakeDiscovery discovery;
+    FakeTrustedStore trust_store;
+    trust_store.trusted_device_ids.insert("device-ignore");
+
+    transport.queued_receive_messages.push_back("{\"type\":\"auth_response\",\"ok\":true}");
+    transport.incoming_stream_data = backup_bytes;
+
+    SyncManager sync_manager(local_manager, "local-device", &transport, &discovery, &trust_store);
+
+    DeviceInfo remote_device;
+    remote_device.device_id = "device-ignore";
+    remote_device.device_name = "Device Ignore";
+    remote_device.host = "127.0.0.1";
+    remote_device.port = 13555;
+
+    SyncOptions options;
+    options.destination_root_override = override_root;
+    options.ignored_extension_names.push_back("ext-local");
+    options.ignored_extension_names.push_back("ext-legacy");
+
+    EXPECT_STATUS_OK(context, sync_manager.pull_from_device(remote_device, options));
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  override_root, "public/scripts/extensions/ext-local/main.js")),
+              "local-content");
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  override_root, "public/scripts/extensions/ext-legacy/main.js")),
+              "legacy-content");
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  override_root, "public/scripts/extensions/ext-added/main.js")),
+              "remote-added");
+
+    return context.failed_assertions == 0;
+}
+
 bool test_discover_devices_autostarts_discovery() {
     TestContext context;
 
@@ -925,15 +1066,99 @@ bool test_manager_pair_sync_rejects_invalid_remote_endpoint() {
     remote_device.port = 38591;
 
     PairSyncOptions options;
-    std::unique_ptr<STManager::SyncTaskHandle> pair_handle = manager.pair_sync(remote_device, options);
-    EXPECT_TRUE(context, pair_handle.get() != NULL);
-
-    const Status pair_status = pair_handle->wait();
+    PairSyncResult result;
+    const Status pair_status = manager.pair_sync(remote_device, options, &result);
     EXPECT_TRUE(context, !pair_status.ok());
     EXPECT_EQ(context, static_cast<int>(pair_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_pair_sync_uses_built_in_default_ignore_list() {
+    TestContext context;
+
+    const std::string root = STManagerTest::create_sillytavern_fixture("manager-pair-default-ignore");
+    TempDirGuard root_guard(root);
+
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 root, "public/scripts/extensions/ext-local/main.js"),
+                             "local"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 root, "public/scripts/extensions/ext-shared/main.js"),
+                             "shared"));
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    DeviceInfo remote_device;
+    remote_device.device_id = "device-unreachable";
+    remote_device.host = "0.0.0.1";
+    remote_device.port = 38591;
+
+    PairSyncOptions options;
+    PairSyncResult result;
+    const Status pair_status = manager.pair_sync(remote_device, options, &result);
+    EXPECT_TRUE(context, !pair_status.ok());
+    EXPECT_EQ(context, result.selected_device.device_id, remote_device.device_id);
+    const std::set<std::string> expected_extensions = expected_default_ignored_extensions();
+    EXPECT_EQ(context, result.effective_ignored_extensions.size(), expected_extensions.size());
+    for (std::set<std::string>::const_iterator it = expected_extensions.begin();
+         it != expected_extensions.end();
+         ++it) {
+        EXPECT_TRUE(
+            context,
+            std::find(
+                result.effective_ignored_extensions.begin(),
+                result.effective_ignored_extensions.end(),
+                *it) != result.effective_ignored_extensions.end());
+    }
+
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_pair_sync_prefers_explicit_ignore_list() {
+    TestContext context;
+
+    const std::string root = STManagerTest::create_sillytavern_fixture("manager-pair-explicit-ignore");
+    TempDirGuard root_guard(root);
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    DeviceInfo remote_device;
+    remote_device.device_id = "device-unreachable";
+    remote_device.host = "0.0.0.1";
+    remote_device.port = 38591;
+
+    PairSyncOptions options;
+    options.sync_options.ignored_extension_names.push_back("custom-a");
+    options.sync_options.ignored_extension_names.push_back("custom-b");
+    PairSyncResult result;
+    const Status pair_status = manager.pair_sync(remote_device, options, &result);
+    EXPECT_TRUE(context, !pair_status.ok());
+    EXPECT_EQ(context, result.effective_ignored_extensions.size(), static_cast<size_t>(2));
     EXPECT_TRUE(
         context,
-        static_cast<int>(pair_handle->state()) == static_cast<int>(STManager::SyncTaskState::kFinished));
+        std::find(
+            result.effective_ignored_extensions.begin(),
+            result.effective_ignored_extensions.end(),
+            "custom-a") != result.effective_ignored_extensions.end());
+    EXPECT_TRUE(
+        context,
+        std::find(
+            result.effective_ignored_extensions.begin(),
+            result.effective_ignored_extensions.end(),
+            "custom-b") != result.effective_ignored_extensions.end());
+    EXPECT_TRUE(
+        context,
+        std::find(
+            result.effective_ignored_extensions.begin(),
+            result.effective_ignored_extensions.end(),
+            "assets") == result.effective_ignored_extensions.end());
 
     return context.failed_assertions == 0;
 }
@@ -1034,14 +1259,21 @@ int main() {
         {"restore_full_replace_removes_stale_files", test_restore_full_replace_removes_stale_files},
         {"restore_to_sillytavern_layout_replaces_public_extensions",
          test_restore_to_sillytavern_layout_replaces_public_extensions},
+        {"restore_with_ignored_extensions_preserves_local_content",
+         test_restore_with_ignored_extensions_preserves_local_content},
         {"sync_push_requires_trusted_device", test_sync_push_requires_trusted_device},
         {"sync_pair_then_push_success", test_sync_pair_then_push_success},
         {"sync_pull_restores_to_override_root", test_sync_pull_restores_to_override_root},
+        {"sync_pull_ignored_extensions_are_preserved", test_sync_pull_ignored_extensions_are_preserved},
         {"discover_devices_autostarts_discovery", test_discover_devices_autostarts_discovery},
         {"manager_create_from_root_creates_state", test_manager_create_from_root_creates_state},
         {"manager_create_from_root_reuses_existing_device_id", test_manager_create_from_root_reuses_existing_device_id},
         {"manager_resolve_pair_target_direct_host_defaults_port", test_manager_resolve_pair_target_direct_host_defaults_port},
         {"manager_pair_sync_rejects_invalid_remote_endpoint", test_manager_pair_sync_rejects_invalid_remote_endpoint},
+        {"manager_pair_sync_uses_built_in_default_ignore_list",
+         test_manager_pair_sync_uses_built_in_default_ignore_list},
+        {"manager_pair_sync_prefers_explicit_ignore_list",
+         test_manager_pair_sync_prefers_explicit_ignore_list},
         {"manager_export_backup_and_restore_backup_roundtrip",
          test_manager_export_backup_and_restore_backup_roundtrip},
         {"manager_restore_backup_rejects_missing_file", test_manager_restore_backup_rejects_missing_file},

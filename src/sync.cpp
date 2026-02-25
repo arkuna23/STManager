@@ -7,6 +7,7 @@
 #include "sync_protocol.h"
 #include "trusted_device_store.h"
 
+#include <algorithm>
 #include <atomic>
 #include <ctime>
 #include <functional>
@@ -85,8 +86,56 @@ bool is_connectable_host(const std::string& host) {
     return !host.empty() && host != "0.0.0.0";
 }
 
-Status make_sync_canceled_status() {
-    return Status(StatusCode::kSyncProtocolError, "Sync task canceled");
+bool is_safe_extension_name(const std::string& extension_name) {
+    if (extension_name.empty() || extension_name == "." || extension_name == "..") {
+        return false;
+    }
+    if (extension_name.find('/') != std::string::npos ||
+        extension_name.find('\\') != std::string::npos) {
+        return false;
+    }
+    return true;
+}
+
+void normalize_extension_names(std::vector<std::string>* extension_names) {
+    if (extension_names == NULL) {
+        return;
+    }
+
+    std::vector<std::string> filtered_names;
+    filtered_names.reserve(extension_names->size());
+    for (std::vector<std::string>::const_iterator it = extension_names->begin();
+         it != extension_names->end();
+         ++it) {
+        if (is_safe_extension_name(*it)) {
+            filtered_names.push_back(*it);
+        }
+    }
+
+    std::sort(filtered_names.begin(), filtered_names.end());
+    filtered_names.erase(
+        std::unique(filtered_names.begin(), filtered_names.end()),
+        filtered_names.end());
+    extension_names->swap(filtered_names);
+}
+
+std::vector<std::string> default_ignored_extensions() {
+    std::vector<std::string> extension_names;
+    extension_names.push_back("assets");
+    extension_names.push_back("attachments");
+    extension_names.push_back("caption");
+    extension_names.push_back("connection-manager");
+    extension_names.push_back("expressions");
+    extension_names.push_back("gallery");
+    extension_names.push_back("memory");
+    extension_names.push_back("quick-reply");
+    extension_names.push_back("regex");
+    extension_names.push_back("stable-diffusion");
+    extension_names.push_back("token-counter");
+    extension_names.push_back("translate");
+    extension_names.push_back("tts");
+    extension_names.push_back("vectors");
+    return extension_names;
 }
 
 }  // namespace
@@ -498,7 +547,9 @@ Status SyncManager::pull_from_device(const DeviceInfo& device_info, const SyncOp
         ? data_manager_.root_path
         : options.destination_root_override;
 
-    const Status restore_status = data_manager_.restore(backup_stream, restore_root);
+    RestoreOptions restore_options;
+    restore_options.ignored_extension_names = options.ignored_extension_names;
+    const Status restore_status = data_manager_.restore(backup_stream, restore_root, restore_options);
     transport_->disconnect();
     return restore_status;
 }
@@ -823,104 +874,67 @@ std::unique_ptr<SyncTaskHandle> Manager::serve_sync(const ServeSyncOptions& opti
     return task_handle;
 }
 
-std::unique_ptr<SyncTaskHandle> Manager::pair_sync(
+Status Manager::pair_sync(
     const DeviceInfo& device_info,
-    const PairSyncOptions& options) const {
+    const PairSyncOptions& options,
+    PairSyncResult* result) const {
+    if (result == NULL) {
+        return Status(StatusCode::kSyncProtocolError, "result output cannot be null");
+    }
+
     const Status initialized_status = ensure_initialized();
     if (!initialized_status.ok()) {
-        return make_finished_sync_task_handle(
-            SyncTaskMode::kPair,
-            local_device_id_,
-            initialized_status);
+        return initialized_status;
     }
 
     if (device_info.device_id.empty()) {
-        return make_finished_sync_task_handle(
-            SyncTaskMode::kPair,
-            local_device_id_,
-            Status(StatusCode::kSyncProtocolError, "device_id cannot be empty"));
+        return Status(StatusCode::kSyncProtocolError, "device_id cannot be empty");
     }
     if (!is_connectable_host(device_info.host) || device_info.port <= 0) {
-        return make_finished_sync_task_handle(
-            SyncTaskMode::kPair,
-            local_device_id_,
-            Status(StatusCode::kSyncProtocolError, "remote device host/port is not connectable"));
+        return Status(StatusCode::kSyncProtocolError, "remote device host/port is not connectable");
     }
 
-    SyncTaskInfo task_info;
-    task_info.mode = SyncTaskMode::kPair;
-    task_info.device_id = local_device_id_;
+    TcpSyncTransport transport;
+    MdnsDeviceDiscovery discovery;
+    JsonTrustedDeviceStore trusted_store(trusted_store_path_);
+    SyncManager sync_manager(
+        data_manager_,
+        local_device_id_,
+        &transport,
+        &discovery,
+        &trusted_store);
 
-    std::shared_ptr<SyncTaskHandle::Impl> task_impl(new SyncTaskHandle::Impl(task_info));
-    std::unique_ptr<SyncTaskHandle> task_handle(new SyncTaskHandle(task_impl));
-    SyncTaskHandle::Impl* task_impl_ptr = task_impl.get();
+    const Status load_status = trusted_store.load();
+    if (!load_status.ok()) {
+        return load_status;
+    }
 
-    const DataManager data_manager = data_manager_;
-    const std::string local_device_id = local_device_id_;
-    const std::string trusted_store_path = trusted_store_path_;
+    SyncOptions effective_sync_options = options.sync_options;
+    if (effective_sync_options.ignored_extension_names.empty()) {
+        effective_sync_options.ignored_extension_names = default_ignored_extensions();
+    }
+    normalize_extension_names(&effective_sync_options.ignored_extension_names);
 
-    task_impl->start([task_impl_ptr, device_info, options, data_manager, local_device_id, trusted_store_path]() -> Status {
-        if (task_impl_ptr->stop_requested()) {
-            return make_sync_canceled_status();
+    result->selected_device = device_info;
+    result->paired_this_time = false;
+    result->effective_ignored_extensions = effective_sync_options.ignored_extension_names;
+
+    bool paired_this_time = false;
+    if (!trusted_store.is_trusted(device_info.device_id)) {
+        const Status pair_status = sync_manager.pair_device(device_info, options.pairing_options);
+        if (!pair_status.ok()) {
+            return pair_status;
         }
+        paired_this_time = true;
+    }
 
-        std::shared_ptr<TcpSyncTransport> transport(new TcpSyncTransport());
-        task_impl_ptr->set_interrupt_callback([transport]() {
-            transport->disconnect();
-        });
+    const Status pull_status = sync_manager.pull_from_device(device_info, effective_sync_options);
+    if (!pull_status.ok()) {
+        return pull_status;
+    }
 
-        MdnsDeviceDiscovery discovery;
-        JsonTrustedDeviceStore trusted_store(trusted_store_path);
-        SyncManager sync_manager(
-            data_manager,
-            local_device_id,
-            transport.get(),
-            &discovery,
-            &trusted_store);
-
-        const Status load_status = trusted_store.load();
-        if (!load_status.ok()) {
-            return load_status;
-        }
-        if (task_impl_ptr->stop_requested()) {
-            return make_sync_canceled_status();
-        }
-
-        if (!trusted_store.is_trusted(device_info.device_id)) {
-            const Status pair_status = sync_manager.pair_device(device_info, options.pairing_options);
-            if (!pair_status.ok()) {
-                if (task_impl_ptr->stop_requested()) {
-                    return make_sync_canceled_status();
-                }
-                return pair_status;
-            }
-        }
-        if (task_impl_ptr->stop_requested()) {
-            return make_sync_canceled_status();
-        }
-
-        const Status pull_status = sync_manager.pull_from_device(device_info, options.sync_options);
-        if (!pull_status.ok()) {
-            if (task_impl_ptr->stop_requested()) {
-                return make_sync_canceled_status();
-            }
-            return pull_status;
-        }
-
-        std::string local_host;
-        int local_port = 0;
-        const Status endpoint_status = transport->local_endpoint(&local_host, &local_port);
-        if (endpoint_status.ok()) {
-            task_impl_ptr->set_local_endpoint(local_host, local_port);
-        }
-
-        if (task_impl_ptr->stop_requested()) {
-            return make_sync_canceled_status();
-        }
-        return Status::ok_status();
-    });
-
-    return task_handle;
+    result->paired_this_time = paired_this_time;
+    return Status::ok_status();
 }
 
 Status Manager::export_backup(const ExportBackupOptions& options, ExportBackupResult* result) const {

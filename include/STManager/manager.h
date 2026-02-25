@@ -48,20 +48,26 @@ struct PairSyncOptions {
         const std::string& pairing_code_in = std::string(),
         bool remember_device_in = true,
         const std::string& destination_root_override_in = std::string(),
-        const BackupOptions& backup_options_in = BackupOptions())
+        const BackupOptions& backup_options_in = BackupOptions(),
+        const std::vector<std::string>& ignored_extension_names_in = std::vector<std::string>())
         : pairing_options(), sync_options() {
         pairing_options.pairing_code = pairing_code_in;
         pairing_options.remember_device = remember_device_in;
         sync_options.destination_root_override = destination_root_override_in;
         sync_options.backup_options = backup_options_in;
+        sync_options.ignored_extension_names = ignored_extension_names_in;
     }
 };
 
 struct PairSyncResult {
     DeviceInfo selected_device;
     bool paired_this_time;
+    std::vector<std::string> effective_ignored_extensions;
 
-    PairSyncResult() : selected_device(), paired_this_time(false) {}
+    PairSyncResult()
+        : selected_device(),
+          paired_this_time(false),
+          effective_ignored_extensions() {}
 };
 
 struct ExportBackupOptions {
@@ -154,9 +160,10 @@ public:
 
     std::unique_ptr<SyncTaskHandle> serve_sync(
         const ServeSyncOptions& options = ServeSyncOptions()) const;
-    std::unique_ptr<SyncTaskHandle> pair_sync(
+    Status pair_sync(
         const DeviceInfo& device_info,
-        const PairSyncOptions& options = PairSyncOptions()) const;
+        const PairSyncOptions& options,
+        PairSyncResult* result) const;
     Status export_backup(const ExportBackupOptions& options, ExportBackupResult* result) const;
     Status restore_backup(const RestoreBackupOptions& options) const;
 

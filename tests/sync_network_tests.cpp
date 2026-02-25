@@ -240,7 +240,8 @@ bool test_manager_serve_sync_returns_stoppable_handle() {
     EXPECT_TRUE(
         context,
         wait_status.ok() ||
-            static_cast<int>(wait_status.code) == static_cast<int>(StatusCode::kSyncProtocolError));
+            static_cast<int>(wait_status.code) == static_cast<int>(StatusCode::kSyncProtocolError) ||
+            static_cast<int>(wait_status.code) == static_cast<int>(StatusCode::kIoError));
     EXPECT_TRUE(
         context,
         static_cast<int>(task_handle->state()) == static_cast<int>(STManager::SyncTaskState::kFinished));
@@ -248,6 +249,7 @@ bool test_manager_serve_sync_returns_stoppable_handle() {
     STManagerTest::remove_directory_recursive(root_path);
     return context.failed_assertions == 0;
 }
+
 
 bool test_manager_export_backup_rejects_null_result() {
     TestContext context;

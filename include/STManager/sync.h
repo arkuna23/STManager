@@ -28,6 +28,9 @@ struct DeviceInfo {
 struct SyncOptions {
     BackupOptions backup_options;
     std::string destination_root_override;
+    std::vector<std::string> ignored_extension_names;
+
+    SyncOptions() : backup_options(), destination_root_override(), ignored_extension_names() {}
 };
 
 struct PairingOptions {

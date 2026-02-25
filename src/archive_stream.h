@@ -17,7 +17,10 @@ Status write_backup_archive(
 
 Status validate_backup_archive(std::istream& in);
 
-Status restore_backup_archive(std::istream& in, const std::string& destination_root);
+Status restore_backup_archive(
+    std::istream& in,
+    const std::string& destination_root,
+    const RestoreOptions& options);
 
 }  // namespace internal
 }  // namespace STManager

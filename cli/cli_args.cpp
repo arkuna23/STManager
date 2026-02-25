@@ -6,6 +6,10 @@
 namespace STManagerCli {
 namespace {
 
+bool is_help_token(const std::string& token) {
+    return token == "--help" || token == "-h" || token == "help";
+}
+
 bool parse_int_value(const std::string& value, int* output) {
     if (value.empty()) {
         return false;
@@ -45,6 +49,10 @@ bool parse_serve_backup_args(
 
     for (int index = 3; index < argc; ++index) {
         const std::string flag = argv[index];
+        if (flag == "--help" || flag == "-h") {
+            parsed_args->command_type = CommandType::kHelp;
+            return true;
+        }
         if (flag == "--root" && index + 1 < argc) {
             args.root_path = argv[++index];
             continue;
@@ -90,6 +98,10 @@ bool parse_pair_restore_args(
 
     for (int index = 3; index < argc; ++index) {
         const std::string flag = argv[index];
+        if (flag == "--help" || flag == "-h") {
+            parsed_args->command_type = CommandType::kHelp;
+            return true;
+        }
         if (flag == "--root" && index + 1 < argc) {
             args.root_path = argv[++index];
             continue;
@@ -136,6 +148,10 @@ bool parse_export_backup_args(
 
     for (int index = 3; index < argc; ++index) {
         const std::string flag = argv[index];
+        if (flag == "--help" || flag == "-h") {
+            parsed_args->command_type = CommandType::kHelp;
+            return true;
+        }
         if (flag == "--root" && index + 1 < argc) {
             args.root_path = argv[++index];
             continue;
@@ -167,6 +183,10 @@ bool parse_restore_backup_args(
 
     for (int index = 3; index < argc; ++index) {
         const std::string flag = argv[index];
+        if (flag == "--help" || flag == "-h") {
+            parsed_args->command_type = CommandType::kHelp;
+            return true;
+        }
         if (flag == "--root" && index + 1 < argc) {
             args.root_path = argv[++index];
             continue;
@@ -197,6 +217,10 @@ bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string*
     }
 
     const std::string command = argv[1];
+    if (is_help_token(command)) {
+        parsed_args->command_type = CommandType::kHelp;
+        return true;
+    }
     if (command != "serve" && command != "pair" && command != "export" && command != "restore") {
         *error_message = "Unknown command: " + command;
         return false;
@@ -247,6 +271,7 @@ bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string*
 std::string build_help_text() {
     std::ostringstream out;
     out << "STManager CLI\n\n";
+    out << "  stmanager --help | -h\n\n";
     out << "Commands:\n";
     out << "  stmanager serve backup [--root <path>] [--bind <host>] [--port <port>] "
            "[--pairing-code <code>] [--advertise true|false]\n";

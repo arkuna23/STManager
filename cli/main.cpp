@@ -19,6 +19,21 @@ void print_status_error(const STManager::Status& status) {
     std::cerr << "Error: " << status.message << "\n";
 }
 
+void print_ignored_extensions(const std::vector<std::string>& ignored_extensions) {
+    std::cout << "Ignored extensions for this restore";
+    if (ignored_extensions.empty()) {
+        std::cout << ": (none)\n";
+        return;
+    }
+
+    std::cout << ":\n";
+    for (std::vector<std::string>::const_iterator it = ignored_extensions.begin();
+         it != ignored_extensions.end();
+         ++it) {
+        std::cout << "  - " << *it << "\n";
+    }
+}
+
 std::atomic<bool> g_interrupt_requested(false);
 
 void handle_sigint(int) {
@@ -47,6 +62,14 @@ private:
 
 bool is_option_token(const char* token) {
     return token != NULL && token[0] == '-';
+}
+
+bool is_help_option_token(const char* token) {
+    if (token == NULL) {
+        return false;
+    }
+    const std::string token_string = token;
+    return token_string == "--help" || token_string == "-h" || token_string == "help";
 }
 
 bool action_to_tokens(
@@ -122,6 +145,10 @@ bool parse_or_select_cli_args(
     char** argv,
     STManagerCli::ParsedArgs* parsed_args,
     std::string* error_message) {
+    if (argc >= 2 && is_help_option_token(argv[1])) {
+        return STManagerCli::parse_cli_args(argc, argv, parsed_args, error_message);
+    }
+
     if (argc >= 2 && !is_option_token(argv[1])) {
         return STManagerCli::parse_cli_args(argc, argv, parsed_args, error_message);
     }
@@ -256,33 +283,22 @@ int pair_restore_command(const STManagerCli::PairRestoreArgs& args) {
     pair_sync_options.pairing_options.remember_device = true;
     pair_sync_options.sync_options.destination_root_override = args.destination_root;
 
-    std::unique_ptr<STManager::SyncTaskHandle> pair_handle =
-        manager.pair_sync(remote_device, pair_sync_options);
-    if (!pair_handle.get()) {
-        std::cerr << "Error: failed creating pair sync task handle\n";
-        return 1;
-    }
-
-    SignalScope signal_scope;
-    while (pair_handle->is_running()) {
-        if (g_interrupt_requested.load()) {
-            pair_handle->stop();
-            g_interrupt_requested.store(false);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
-    const STManager::Status pair_sync_status = pair_handle->wait();
+    STManager::PairSyncResult pair_sync_result;
+    const STManager::Status pair_sync_status = manager.pair_sync(
+        remote_device,
+        pair_sync_options,
+        &pair_sync_result);
     if (!pair_sync_status.ok()) {
+        std::cout << "Using default ignored extensions from built-in defaults.\n";
+        print_ignored_extensions(pair_sync_result.effective_ignored_extensions);
         print_status_error(pair_sync_status);
         return 1;
     }
 
-    const STManager::SyncTaskInfo pair_info = pair_handle->info();
-    std::cout << "Restore completed from device " << remote_device.device_id << ".\n";
-    if (!pair_info.local_ip.empty() && pair_info.local_port > 0) {
-        std::cout << "Local endpoint: " << pair_info.local_ip << ":" << pair_info.local_port << "\n";
-    }
+    std::cout << "Using default ignored extensions from built-in defaults.\n";
+    print_ignored_extensions(pair_sync_result.effective_ignored_extensions);
+    std::cout << "Restore completed from device " << pair_sync_result.selected_device.device_id
+              << ".\n";
     return 0;
 }
 
@@ -357,6 +373,10 @@ int main(int argc, char** argv) {
 
     if (parsed_args.command_type == STManagerCli::CommandType::kServeBackup) {
         return serve_backup_command(parsed_args.serve_backup_args);
+    }
+    if (parsed_args.command_type == STManagerCli::CommandType::kHelp) {
+        std::cout << STManagerCli::build_help_text() << "\n";
+        return 0;
     }
     if (parsed_args.command_type == STManagerCli::CommandType::kPairRestore) {
         return pair_restore_command(parsed_args.pair_restore_args);

@@ -10,6 +10,7 @@ const char* const kDefaultBackupFilePath = "st-backup.tar.zst";
 
 enum class CommandType {
     kUnknown = 0,
+    kHelp,
     kServeBackup,
     kPairRestore,
     kExportBackup,

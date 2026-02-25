@@ -64,11 +64,18 @@ Status DataManager::backup(std::ostream& out, const BackupOptions& options) cons
 }
 
 Status DataManager::restore(std::istream& in, const std::string& destination_root) const {
+    return restore(in, destination_root, RestoreOptions());
+}
+
+Status DataManager::restore(
+    std::istream& in,
+    const std::string& destination_root,
+    const RestoreOptions& options) const {
     if (!status_.ok()) {
         return status_;
     }
 
-    return internal::restore_backup_archive(in, destination_root);
+    return internal::restore_backup_archive(in, destination_root, options);
 }
 
 }  // namespace STManager

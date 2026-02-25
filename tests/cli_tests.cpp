@@ -157,6 +157,48 @@ bool test_parse_restore_backup_defaults() {
     return context.failed_assertions == 0;
 }
 
+bool test_parse_help_options() {
+    TestContext context;
+
+    char command_0[] = "stmanager";
+    char command_1[] = "--help";
+    char* argv_long[] = {command_0, command_1};
+
+    STManagerCli::ParsedArgs parsed_args;
+    std::string error_message;
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(2, argv_long, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kHelp));
+
+    char command_2[] = "-h";
+    char* argv_short[] = {command_0, command_2};
+    parsed_args = STManagerCli::ParsedArgs();
+    error_message.clear();
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(2, argv_short, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kHelp));
+
+    char command_3[] = "serve";
+    char command_4[] = "backup";
+    char command_5[] = "--help";
+    char* argv_subcommand[] = {command_0, command_3, command_4, command_5};
+    parsed_args = STManagerCli::ParsedArgs();
+    error_message.clear();
+    EXPECT_TRUE(
+        context,
+        STManagerCli::parse_cli_args(4, argv_subcommand, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kHelp));
+
+    return context.failed_assertions == 0;
+}
+
 bool test_parse_serve_without_action_fails() {
     TestContext context;
 
@@ -453,6 +495,7 @@ int main() {
         {"parse_pair_restore_allows_missing_device_id", test_parse_pair_restore_allows_missing_device_id},
         {"parse_export_backup_defaults", test_parse_export_backup_defaults},
         {"parse_restore_backup_defaults", test_parse_restore_backup_defaults},
+        {"parse_help_options", test_parse_help_options},
         {"parse_serve_without_action_fails", test_parse_serve_without_action_fails},
         {"detect_sillytavern_root_from_parent", test_detect_sillytavern_root_from_parent},
         {"manager_create_from_root_creates_device_id", test_manager_create_from_root_creates_device_id},
