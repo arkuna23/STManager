@@ -19,6 +19,8 @@
 #endif
 
 #include "../src/archive_stream.h"
+#include "../src/fs_ops.h"
+#include "../src/platform_compat.h"
 #include "test_helpers.h"
 
 using STManager::BackupOptions;
@@ -263,6 +265,18 @@ struct ArchiveFileEntry {
     std::string content;
 };
 
+void set_archive_entry_path(struct archive_entry* archive_entry, const std::string& path) {
+#ifdef _WIN32
+    std::wstring path_utf16;
+    const Status convert_status = STManager::internal::utf8_to_utf16(path, &path_utf16);
+    if (convert_status.ok()) {
+        archive_entry_copy_pathname_w(archive_entry, path_utf16.c_str());
+        return;
+    }
+#endif
+    archive_entry_set_pathname(archive_entry, path.c_str());
+}
+
 std::vector<std::string> split_path_segments(const std::string& path) {
     std::vector<std::string> segments;
     std::string current;
@@ -328,7 +342,7 @@ std::string create_valid_archive_bytes(const std::vector<ArchiveFileEntry>& file
             }
 
             struct archive_entry* directory_entry = archive_entry_new();
-            archive_entry_set_pathname(directory_entry, current_directory.c_str());
+            set_archive_entry_path(directory_entry, current_directory);
             archive_entry_set_filetype(directory_entry, AE_IFDIR);
             archive_entry_set_perm(directory_entry, 0755);
             archive_entry_set_size(directory_entry, 0);
@@ -338,7 +352,7 @@ std::string create_valid_archive_bytes(const std::vector<ArchiveFileEntry>& file
         }
 
         struct archive_entry* file_entry = archive_entry_new();
-        archive_entry_set_pathname(file_entry, it->path.c_str());
+        set_archive_entry_path(file_entry, it->path);
         archive_entry_set_filetype(file_entry, AE_IFREG);
         archive_entry_set_perm(file_entry, 0644);
         archive_entry_set_size(file_entry, static_cast<la_int64_t>(it->content.size()));
@@ -617,6 +631,44 @@ bool test_backup_archive_with_nested_directories_validates_successfully() {
     backup_stream.clear();
     backup_stream.seekg(0, std::ios::beg);
     EXPECT_STATUS_OK(context, STManager::internal::validate_backup_archive(backup_stream));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_restore_with_utf8_file_path_succeeds() {
+    TestContext context;
+
+    const std::string source_root = STManagerTest::create_sillytavern_fixture("restore-utf8-src");
+    const std::string restore_root = STManagerTest::create_sillytavern_fixture("restore-utf8-dst");
+    TempDirGuard source_guard(source_root);
+    TempDirGuard restore_guard(restore_root);
+
+    const std::string utf8_file_name =
+        std::string(u8"\u590f\u7483 Pro \u6bd4\u90bb\u661f1.51.json");
+    const std::string utf8_archive_path =
+        std::string("data/default-user/OpenAI Settings/") + utf8_file_name;
+
+    const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {utf8_archive_path, "{\"name\":\"utf8\"}"},
+        {"extensions/ext-utf8/main.js", "console.log('utf8');"},
+    });
+    EXPECT_TRUE(context, !archive_bytes.empty());
+
+    const DataManager manager = DataManager::locate(source_root);
+    EXPECT_TRUE(context, manager.is_valid());
+
+    std::stringstream archive_stream(std::ios::in | std::ios::out | std::ios::binary);
+    archive_stream.write(archive_bytes.data(), static_cast<std::streamsize>(archive_bytes.size()));
+    archive_stream.clear();
+    archive_stream.seekg(0, std::ios::beg);
+    EXPECT_STATUS_OK(context, manager.restore(archive_stream, restore_root));
+
+    EXPECT_TRUE(context, STManager::internal::path_exists(
+                             STManagerTest::join_path(restore_root, utf8_archive_path)));
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/third-party/ext-utf8/main.js")),
+              std::string("console.log('utf8');"));
 
     return context.failed_assertions == 0;
 }
@@ -1439,6 +1491,7 @@ int main() {
         {"backup_archive_with_nested_directories_validates_successfully",
          test_backup_archive_with_nested_directories_validates_successfully},
 #endif
+        {"restore_with_utf8_file_path_succeeds", test_restore_with_utf8_file_path_succeeds},
         {"restore_rejects_traversal_entry", test_restore_rejects_traversal_entry},
         {"restore_full_replace_removes_stale_files", test_restore_full_replace_removes_stale_files},
         {"restore_to_sillytavern_layout_replaces_public_extensions",

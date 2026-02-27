@@ -98,9 +98,9 @@ target_link_libraries(STManagerStatic PRIVATE nlohmann_json::nlohmann_json)
 
 if(WIN32)
     if(STMANAGER_BUILD_SHARED)
-        target_link_libraries(STManager PRIVATE ws2_32)
+        target_link_libraries(STManager PRIVATE ws2_32 iphlpapi)
     endif()
-    target_link_libraries(STManagerStatic PUBLIC ws2_32)
+    target_link_libraries(STManagerStatic PUBLIC ws2_32 iphlpapi)
 endif()
 
 include(GenerateExportHeader)

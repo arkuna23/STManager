@@ -1,8 +1,14 @@
-#include "discovery_mdns.h"
-
 #ifdef _WIN32
+#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0A00
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
+// clang-format off
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <iptypes.h>
+// clang-format on
 #else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -12,17 +18,17 @@
 #include <unistd.h>
 #endif
 
-#include <nlohmann/json.hpp>
-
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <thread>
 
+#include "discovery_mdns.h"
 #include "platform_compat.h"
 
 namespace STManager {
@@ -51,21 +57,15 @@ Status make_io_error(const std::string& prefix) {
 
 int set_socket_option_int(int socket_fd, int level, int option_name, int option_value) {
 #ifdef _WIN32
-    return setsockopt(
-        socket_fd,
-        level,
-        option_name,
-        reinterpret_cast<const char*>(&option_value),
-        static_cast<int>(sizeof(option_value)));
+    return setsockopt(socket_fd, level, option_name, reinterpret_cast<const char*>(&option_value),
+                      static_cast<int>(sizeof(option_value)));
 #else
     return setsockopt(socket_fd, level, option_name, &option_value, sizeof(option_value));
 #endif
 }
 
-bool parse_discovery_response_message(
-    const std::string& message,
-    const std::string& fallback_host,
-    DeviceInfo* device_info) {
+bool parse_discovery_response_message(const std::string& message, const std::string& fallback_host,
+                                      DeviceInfo* device_info) {
     try {
         const nlohmann::json response_json = nlohmann::json::parse(message);
         if (!response_json.is_object()) {
@@ -143,13 +143,9 @@ bool receive_discovery_response(int socket_fd, DeviceInfo* device_info) {
     socklen_t source_addr_len = sizeof(source_addr);
 
     char buffer[4096];
-    const ssize_t read_size = recvfrom(
-        socket_fd,
-        buffer,
-        sizeof(buffer) - 1,
-        0,
-        reinterpret_cast<struct sockaddr*>(&source_addr),
-        &source_addr_len);
+    const ssize_t read_size =
+        recvfrom(socket_fd, buffer, sizeof(buffer) - 1, 0,
+                 reinterpret_cast<struct sockaddr*>(&source_addr), &source_addr_len);
     if (read_size < 0) {
         return false;
     }
@@ -158,7 +154,8 @@ bool receive_discovery_response(int socket_fd, DeviceInfo* device_info) {
 
     char host_buffer[INET_ADDRSTRLEN];
     std::memset(host_buffer, 0, sizeof(host_buffer));
-    const char* host_text = inet_ntop(AF_INET, &source_addr.sin_addr, host_buffer, sizeof(host_buffer));
+    const char* host_text =
+        inet_ntop(AF_INET, &source_addr.sin_addr, host_buffer, sizeof(host_buffer));
     const std::string fallback_host = host_text == NULL ? std::string() : std::string(host_text);
 
     if (fallback_host.empty() || fallback_host == "0.0.0.0") {
@@ -182,6 +179,67 @@ void append_discovery_target(std::vector<uint32_t>* targets, uint32_t address) {
     targets->push_back(address);
 }
 
+#ifdef _WIN32
+void collect_windows_interface_broadcasts(std::vector<uint32_t>* targets) {
+    if (targets == NULL) {
+        return;
+    }
+
+    ULONG address_flags =
+        GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG buffer_size = 15 * 1024;
+    std::vector<unsigned char> address_buffer(buffer_size);
+    IP_ADAPTER_ADDRESSES* adapter_list =
+        reinterpret_cast<IP_ADAPTER_ADDRESSES*>(address_buffer.data());
+
+    ULONG address_result =
+        GetAdaptersAddresses(AF_INET, address_flags, NULL, adapter_list, &buffer_size);
+    if (address_result == ERROR_BUFFER_OVERFLOW) {
+        address_buffer.resize(buffer_size);
+        adapter_list = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(address_buffer.data());
+        address_result =
+            GetAdaptersAddresses(AF_INET, address_flags, NULL, adapter_list, &buffer_size);
+    }
+    if (address_result != NO_ERROR) {
+        return;
+    }
+
+    for (IP_ADAPTER_ADDRESSES* adapter = adapter_list; adapter != NULL; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp) {
+            continue;
+        }
+        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+
+        for (IP_ADAPTER_UNICAST_ADDRESS* unicast = adapter->FirstUnicastAddress; unicast != NULL;
+             unicast = unicast->Next) {
+            if (unicast->Address.lpSockaddr == NULL ||
+                unicast->Address.lpSockaddr->sa_family != AF_INET) {
+                continue;
+            }
+
+            const struct sockaddr_in* ipv4_addr =
+                reinterpret_cast<const struct sockaddr_in*>(unicast->Address.lpSockaddr);
+            const uint32_t host_address = ntohl(ipv4_addr->sin_addr.s_addr);
+            if (host_address == 0 || (host_address & 0xff000000U) == 0x7f000000U) {
+                continue;
+            }
+
+            const ULONG prefix_length = static_cast<ULONG>(unicast->OnLinkPrefixLength);
+            if (prefix_length > 32) {
+                continue;
+            }
+
+            const uint32_t host_netmask =
+                prefix_length == 0 ? 0U : (0xffffffffU << (32 - prefix_length));
+            const uint32_t host_broadcast = (host_address & host_netmask) | (~host_netmask);
+            append_discovery_target(targets, htonl(host_broadcast));
+        }
+    }
+}
+#endif
+
 void collect_discovery_targets(std::vector<uint32_t>* targets) {
     if (targets == NULL) {
         return;
@@ -191,7 +249,9 @@ void collect_discovery_targets(std::vector<uint32_t>* targets) {
     append_discovery_target(targets, htonl(INADDR_BROADCAST));
     append_discovery_target(targets, htonl(INADDR_LOOPBACK));
 
-#ifndef _WIN32
+#ifdef _WIN32
+    collect_windows_interface_broadcasts(targets);
+#else
     struct ifaddrs* interface_list = NULL;
     if (getifaddrs(&interface_list) != 0 || interface_list == NULL) {
         return;
@@ -210,8 +270,7 @@ void collect_discovery_targets(std::vector<uint32_t>* targets) {
         }
 
         uint32_t target_address = 0;
-        if ((it->ifa_flags & IFF_BROADCAST) != 0 &&
-            it->ifa_broadaddr != NULL &&
+        if ((it->ifa_flags & IFF_BROADCAST) != 0 && it->ifa_broadaddr != NULL &&
             it->ifa_broadaddr->sa_family == AF_INET) {
             const struct sockaddr_in* broadcast_addr =
                 reinterpret_cast<const struct sockaddr_in*>(it->ifa_broadaddr);
@@ -246,13 +305,9 @@ int send_discovery_requests(int socket_fd, const std::string& request_message) {
         target_addr.sin_port = htons(kDiscoveryPort);
         target_addr.sin_addr.s_addr = static_cast<decltype(target_addr.sin_addr.s_addr)>(*it);
 
-        const ssize_t sent_size = sendto(
-            socket_fd,
-            request_message.data(),
-            request_message.size(),
-            0,
-            reinterpret_cast<const struct sockaddr*>(&target_addr),
-            sizeof(target_addr));
+        const ssize_t sent_size =
+            sendto(socket_fd, request_message.data(), request_message.size(), 0,
+                   reinterpret_cast<const struct sockaddr*>(&target_addr), sizeof(target_addr));
         if (sent_size >= 0) {
             ++successful_sends;
         }
@@ -289,13 +344,9 @@ void discovery_responder_loop(int socket_fd, DeviceInfo local_device) {
         socklen_t source_addr_len = sizeof(source_addr);
 
         char buffer[4096];
-        const ssize_t read_size = recvfrom(
-            socket_fd,
-            buffer,
-            sizeof(buffer) - 1,
-            0,
-            reinterpret_cast<struct sockaddr*>(&source_addr),
-            &source_addr_len);
+        const ssize_t read_size =
+            recvfrom(socket_fd, buffer, sizeof(buffer) - 1, 0,
+                     reinterpret_cast<struct sockaddr*>(&source_addr), &source_addr_len);
         if (read_size < 0) {
             if (socket_error_is_interrupt()) {
                 continue;
@@ -308,13 +359,8 @@ void discovery_responder_loop(int socket_fd, DeviceInfo local_device) {
             continue;
         }
 
-        sendto(
-            socket_fd,
-            response_message.data(),
-            response_message.size(),
-            0,
-            reinterpret_cast<const struct sockaddr*>(&source_addr),
-            source_addr_len);
+        sendto(socket_fd, response_message.data(), response_message.size(), 0,
+               reinterpret_cast<const struct sockaddr*>(&source_addr), source_addr_len);
     }
 }
 
@@ -357,9 +403,8 @@ Status list_mdns_devices(std::vector<DeviceInfo>* devices) {
     const int successful_sends = send_discovery_requests(socket_fd, request_message);
     if (successful_sends == 0) {
         close_socket_fd(socket_fd);
-        return Status(
-            StatusCode::kDiscoveryError,
-            "Failed to send discovery request on any local interface");
+        return Status(StatusCode::kDiscoveryError,
+                      "Failed to send discovery request on any local interface");
     }
 
     std::map<std::string, DeviceInfo> by_device_id;
@@ -396,8 +441,7 @@ Status list_mdns_devices(std::vector<DeviceInfo>* devices) {
     close_socket_fd(socket_fd);
 
     for (std::map<std::string, DeviceInfo>::const_iterator it = by_device_id.begin();
-         it != by_device_id.end();
-         ++it) {
+         it != by_device_id.end(); ++it) {
         devices->push_back(it->second);
     }
 
@@ -406,10 +450,12 @@ Status list_mdns_devices(std::vector<DeviceInfo>* devices) {
 
 Status start_discovery_responder(const DeviceInfo& local_device) {
     if (local_device.device_id.empty()) {
-        return Status(StatusCode::kDiscoveryError, "local device_id is required for discovery responder");
+        return Status(StatusCode::kDiscoveryError,
+                      "local device_id is required for discovery responder");
     }
     if (local_device.port <= 0) {
-        return Status(StatusCode::kDiscoveryError, "local device port is required for discovery responder");
+        return Status(StatusCode::kDiscoveryError,
+                      "local device port is required for discovery responder");
     }
 
     const Status runtime_status = ensure_socket_runtime();

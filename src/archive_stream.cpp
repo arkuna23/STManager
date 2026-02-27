@@ -14,9 +14,9 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <cstdlib>
 #include <exception>
 #include <istream>
 #include <set>
@@ -80,9 +80,8 @@ Status make_io_error(const std::string& action, const std::string& path) {
     return Status(StatusCode::kIoError, message.str());
 }
 
-void append_temp_directory_candidate(
-    std::vector<std::string>* candidate_directories,
-    const char* value) {
+void append_temp_directory_candidate(std::vector<std::string>* candidate_directories,
+                                     const char* value) {
     if (candidate_directories == NULL || value == NULL || value[0] == '\0') {
         return;
     }
@@ -94,8 +93,7 @@ void append_temp_directory_candidate(
         }
 
         for (std::vector<std::string>::const_iterator it = candidate_directories->begin();
-             it != candidate_directories->end();
-             ++it) {
+             it != candidate_directories->end(); ++it) {
             if (*it == candidate) {
                 return;
             }
@@ -107,16 +105,16 @@ void append_temp_directory_candidate(
     }
 }
 
-void append_temp_directory_candidate(
-    std::vector<std::string>* candidate_directories,
-    const std::string& value) {
+void append_temp_directory_candidate(std::vector<std::string>* candidate_directories,
+                                     const std::string& value) {
     if (value.empty()) {
         return;
     }
     append_temp_directory_candidate(candidate_directories, value.c_str());
 }
 
-Status create_temp_archive_file_path(const std::string& preferred_temp_directory, std::string* path) {
+Status create_temp_archive_file_path(const std::string& preferred_temp_directory,
+                                     std::string* path) {
     if (path == NULL) {
         return Status(StatusCode::kIoError, "Temporary archive path output cannot be null");
     }
@@ -138,8 +136,7 @@ Status create_temp_archive_file_path(const std::string& preferred_temp_directory
 
     std::vector<std::string> failure_details;
     for (std::vector<std::string>::const_iterator it = candidate_directories.begin();
-         it != candidate_directories.end();
-         ++it) {
+         it != candidate_directories.end(); ++it) {
         if (it->size() > kMaxTempPathCandidateLength) {
             failure_details.push_back(*it + " -> skipped (candidate path is too long)");
             continue;
@@ -161,8 +158,8 @@ Status create_temp_archive_file_path(const std::string& preferred_temp_directory
         if (temp_fd < 0) {
             const int error_code = errno;
             std::ostringstream detail_stream;
-            detail_stream << file_template << " -> " << std::strerror(error_code)
-                          << " (" << error_code << ")";
+            detail_stream << file_template << " -> " << std::strerror(error_code) << " ("
+                          << error_code << ")";
             failure_details.push_back(detail_stream.str());
             continue;
         }
@@ -189,7 +186,7 @@ Status create_temp_archive_file_path(const std::string& preferred_temp_directory
 }
 
 Status copy_file_to_output_stream(const std::string& file_path, std::ostream& out) {
-    const int source_fd = open(file_path.c_str(), O_RDONLY);
+    const int source_fd = path_open_read(file_path.c_str());
     if (source_fd < 0) {
         return make_io_error("open", file_path);
     }
@@ -289,13 +286,11 @@ Status read_stream_to_memory(std::istream& in, std::string* output) {
             data.append(buffer.data(), static_cast<std::string::size_type>(in.gcount()));
         }
     } catch (const std::exception& exception) {
-        return Status(
-            StatusCode::kIoError,
-            std::string("stage=archive.stream.read_to_memory; ") + exception.what());
+        return Status(StatusCode::kIoError,
+                      std::string("stage=archive.stream.read_to_memory; ") + exception.what());
     } catch (...) {
-        return Status(
-            StatusCode::kIoError,
-            "stage=archive.stream.read_to_memory; unknown exception");
+        return Status(StatusCode::kIoError,
+                      "stage=archive.stream.read_to_memory; unknown exception");
     }
 
     if (!in.eof() && in.fail()) {
@@ -317,7 +312,7 @@ Status finalize_archive_entry(struct archive* archive_writer, const std::string&
 
 Status write_regular_file_data(struct archive* archive_writer, const std::string& source_path,
                                size_t expected_file_size) {
-    int source_fd = open(source_path.c_str(), O_RDONLY);
+    int source_fd = path_open_read(source_path.c_str());
     if (source_fd < 0) {
         return make_io_error("open", source_path);
     }
@@ -477,7 +472,7 @@ Status restore_regular_file(struct archive* archive_reader, const std::string& d
     }
 
     int destination_fd =
-        open(destination_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, static_cast<int>(mode & 0777));
+        path_open_write_trunc(destination_path.c_str(), static_cast<int>(mode & 0777));
     if (destination_fd < 0) {
         return make_io_error("open", destination_path);
     }
@@ -534,7 +529,8 @@ Status resolve_restore_target_paths(const std::string& destination_root,
     }
 
     target_paths->data_path = join_path(destination_root, "data");
-    target_paths->extensions_path = join_path(destination_root, "public/scripts/extensions/third-party");
+    target_paths->extensions_path =
+        join_path(destination_root, "public/scripts/extensions/third-party");
     return Status::ok_status();
 }
 
@@ -544,7 +540,15 @@ Status extract_archive_to_directory(struct archive* archive_reader,
     int next_header_status = ARCHIVE_OK;
     while ((next_header_status = archive_read_next_header(archive_reader, &archive_entry)) ==
            ARCHIVE_OK) {
-        const char* archive_path_cstr = archive_entry_pathname(archive_entry);
+        const char* archive_path_cstr = NULL;
+#ifdef _WIN32
+        archive_path_cstr = archive_entry_pathname_utf8(archive_entry);
+        if (archive_path_cstr == NULL || archive_path_cstr[0] == '\0') {
+            archive_path_cstr = archive_entry_pathname(archive_entry);
+        }
+#else
+        archive_path_cstr = archive_entry_pathname(archive_entry);
+#endif
         if (archive_path_cstr == NULL) {
             return Status(StatusCode::kInvalidArchiveEntry, "Archive entry has no path");
         }
@@ -646,9 +650,8 @@ Status restore_git_manifest(const std::string& stage_root, const std::string& de
     return Status::ok_status();
 }
 
-Status restore_from_staging_directory(
-    const std::string& stage_root,
-    const std::string& destination_root) {
+Status restore_from_staging_directory(const std::string& stage_root,
+                                      const std::string& destination_root) {
     const std::string staged_data_path = join_path(stage_root, "data");
     if (!path_is_directory(staged_data_path)) {
         return Status(StatusCode::kInvalidArchiveEntry,
@@ -761,9 +764,8 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
     if (archive_write_set_options(archive_writer, "hdrcharset=BINARY") != ARCHIVE_OK) {
         const std::string archive_error = archive_error_string(archive_writer);
         archive_write_free(archive_writer);
-        return Status(
-            StatusCode::kArchiveError,
-            "Failed to configure archive writer options: " + archive_error);
+        return Status(StatusCode::kArchiveError,
+                      "Failed to configure archive writer options: " + archive_error);
     }
 
     if (archive_write_add_filter_zstd(archive_writer) != ARCHIVE_OK) {
@@ -774,9 +776,7 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
 
     const std::string root_path = parent_path(data_path);
     const std::string preferred_temp_directory =
-        root_path.empty()
-            ? std::string()
-            : join_path(join_path(root_path, ".stmanager"), "tmp");
+        root_path.empty() ? std::string() : join_path(join_path(root_path, ".stmanager"), "tmp");
 
     std::string temp_archive_path;
     const Status temp_path_status =
@@ -789,7 +789,7 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
     if (archive_write_open_filename(archive_writer, temp_archive_path.c_str()) != ARCHIVE_OK) {
         const std::string archive_error = archive_error_string(archive_writer);
         archive_write_free(archive_writer);
-        unlink(temp_archive_path.c_str());
+        path_unlink(temp_archive_path.c_str());
         return Status(StatusCode::kArchiveError, "Failed to open archive stream: " + archive_error);
     }
 
@@ -801,7 +801,7 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
         if (!collect_status.ok()) {
             archive_write_close(archive_writer);
             archive_write_free(archive_writer);
-            unlink(temp_archive_path.c_str());
+            path_unlink(temp_archive_path.c_str());
             return collect_status;
         }
     }
@@ -810,7 +810,7 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
     if (!data_status.ok()) {
         archive_write_close(archive_writer);
         archive_write_free(archive_writer);
-        unlink(temp_archive_path.c_str());
+        path_unlink(temp_archive_path.c_str());
         return data_status;
     }
 
@@ -819,7 +819,7 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
     if (!extensions_root_status.ok()) {
         archive_write_close(archive_writer);
         archive_write_free(archive_writer);
-        unlink(temp_archive_path.c_str());
+        path_unlink(temp_archive_path.c_str());
         return extensions_root_status;
     }
 
@@ -829,7 +829,7 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
         if (!manifest_status.ok()) {
             archive_write_close(archive_writer);
             archive_write_free(archive_writer);
-            unlink(temp_archive_path.c_str());
+            path_unlink(temp_archive_path.c_str());
             return manifest_status;
         }
     }
@@ -837,7 +837,7 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
     if (archive_write_close(archive_writer) != ARCHIVE_OK) {
         const std::string archive_error = archive_error_string(archive_writer);
         archive_write_free(archive_writer);
-        unlink(temp_archive_path.c_str());
+        path_unlink(temp_archive_path.c_str());
         return Status(StatusCode::kArchiveError,
                       "Failed to close archive writer: " + archive_error);
     }
@@ -845,7 +845,7 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
     archive_write_free(archive_writer);
 
     const Status copy_status = copy_file_to_output_stream(temp_archive_path, out);
-    unlink(temp_archive_path.c_str());
+    path_unlink(temp_archive_path.c_str());
     if (!copy_status.ok()) {
         return copy_status;
     }
@@ -922,10 +922,8 @@ Status validate_backup_archive(std::istream& in) {
     return Status::ok_status();
 }
 
-Status restore_backup_archive(
-    std::istream& in,
-    const std::string& destination_root,
-    const RestoreOptions& options) {
+Status restore_backup_archive(std::istream& in, const std::string& destination_root,
+                              const RestoreOptions& options) {
     if (destination_root.empty()) {
         return Status(StatusCode::kInvalidRoot, "Restore destination root cannot be empty");
     }
@@ -990,7 +988,7 @@ Status restore_backup_archive(
 
     archive_read_free(archive_reader);
 
-    (void)options;
+    (void) options;
     const Status restore_status = restore_from_staging_directory(stage_root, destination_root);
     const Status cleanup_status = remove_path_recursive(stage_root);
     if (!restore_status.ok()) {

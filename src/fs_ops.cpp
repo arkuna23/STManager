@@ -1,10 +1,11 @@
 #include "fs_ops.h"
-#include "platform_compat.h"
 
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#include "platform_compat.h"
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -45,13 +46,13 @@ Status copy_regular_file(const std::string& source_path, const std::string& dest
         return parent_status;
     }
 
-    const int source_fd = open(source_path.c_str(), O_RDONLY);
+    const int source_fd = path_open_read(source_path.c_str());
     if (source_fd < 0) {
         return make_io_error("open", source_path, errno);
     }
 
-    const int destination_fd = open(destination_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC,
-                                    static_cast<int>(source_mode & 0777));
+    const int destination_fd =
+        path_open_write_trunc(destination_path.c_str(), static_cast<int>(source_mode & 0777));
     if (destination_fd < 0) {
         const int open_error = errno;
         close_file_fd(source_fd);
@@ -191,7 +192,7 @@ Status remove_path_recursive(const std::string& path) {
     }
 
     if (!S_ISDIR(path_stat.st_mode)) {
-        if (unlink(path.c_str()) != 0) {
+        if (path_unlink(path.c_str()) != 0) {
             return make_io_error("unlink", path, errno);
         }
         return Status::ok_status();
@@ -219,7 +220,7 @@ Status remove_path_recursive(const std::string& path) {
 
     closedir(directory);
 
-    if (rmdir(path.c_str()) != 0) {
+    if (path_rmdir(path.c_str()) != 0) {
         return make_io_error("rmdir", path, errno);
     }
 
@@ -248,7 +249,7 @@ Status move_or_copy_path(const std::string& source_path, const std::string& dest
         return parent_status;
     }
 
-    if (rename(source_path.c_str(), destination_path.c_str()) == 0) {
+    if (path_rename(source_path.c_str(), destination_path.c_str()) == 0) {
         return Status::ok_status();
     }
 
