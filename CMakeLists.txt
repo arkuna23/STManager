@@ -6,6 +6,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
 
+# MinGW GCC can hit LTO internal compiler errors on this project in Release builds.
+if(MINGW)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
+endif()
+
 option(STMANAGER_CLI_STATIC_LINK "Build stmanager CLI with static linking" ON)
 option(STMANAGER_CLI_SIZE_OPTIMIZED_RELEASE "Optimize stmanager size in Release builds" ON)
 option(STMANAGER_LIBRARY_SIZE_OPTIMIZED "Optimize STManager library size in Release builds" ON)
@@ -22,6 +28,7 @@ set(STMANAGER_SOURCES
     src/archive_stream.cpp
     src/data.cpp
     src/discovery_mdns.cpp
+    src/fd_stream.cpp
     src/fs_ops.cpp
     src/git_manifest.cpp
     src/locate.cpp

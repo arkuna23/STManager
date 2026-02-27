@@ -3,6 +3,7 @@
 #include "archive_stream.h"
 #include "locate.h"
 
+#include <exception>
 #include <istream>
 #include <ostream>
 
@@ -60,7 +61,17 @@ Status DataManager::backup(std::ostream& out, const BackupOptions& options) cons
         return status_;
     }
 
-    return internal::write_backup_archive(data_path, extensions_path, out, options);
+    try {
+        return internal::write_backup_archive(data_path, extensions_path, out, options);
+    } catch (const std::exception& exception) {
+        return Status(
+            StatusCode::kIoError,
+            std::string("stage=data.backup.exception; ") + exception.what());
+    } catch (...) {
+        return Status(
+            StatusCode::kIoError,
+            "stage=data.backup.exception; unknown exception");
+    }
 }
 
 Status DataManager::restore(std::istream& in, const std::string& destination_root) const {
@@ -75,7 +86,17 @@ Status DataManager::restore(
         return status_;
     }
 
-    return internal::restore_backup_archive(in, destination_root, options);
+    try {
+        return internal::restore_backup_archive(in, destination_root, options);
+    } catch (const std::exception& exception) {
+        return Status(
+            StatusCode::kIoError,
+            std::string("stage=data.restore.exception; ") + exception.what());
+    } catch (...) {
+        return Status(
+            StatusCode::kIoError,
+            "stage=data.restore.exception; unknown exception");
+    }
 }
 
 }  // namespace STManager

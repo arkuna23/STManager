@@ -9,7 +9,9 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <netdb.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -21,11 +23,14 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <sstream>
 
 namespace STManager {
 namespace {
+
+const uint32_t kMaxControlMessageBytes = 1024 * 1024;
 
 class DiscoveryResponderScope {
 public:
@@ -198,14 +203,33 @@ Status send_framed_string(int socket_fd, const std::string& payload) {
 }
 
 Status receive_framed_string(int socket_fd, std::string* payload) {
+    if (payload == NULL) {
+        return Status(StatusCode::kSyncProtocolError, "payload output cannot be null");
+    }
+
     uint32_t payload_size = 0;
     const Status length_status = read_u32(socket_fd, &payload_size);
     if (!length_status.ok()) {
         return length_status;
     }
+    if (payload_size > kMaxControlMessageBytes) {
+        return Status(
+            StatusCode::kSyncProtocolError,
+            "Control message too large");
+    }
 
     std::string message;
-    message.resize(payload_size);
+    try {
+        message.resize(payload_size);
+    } catch (const std::exception& exception) {
+        return Status(
+            StatusCode::kIoError,
+            std::string("stage=server.protocol.receive_framed_string.resize; ") + exception.what());
+    } catch (...) {
+        return Status(
+            StatusCode::kIoError,
+            "stage=server.protocol.receive_framed_string.resize; unknown exception");
+    }
     if (payload_size > 0) {
         const Status read_status = read_all(socket_fd, &message[0], payload_size);
         if (!read_status.ok()) {
@@ -264,6 +288,23 @@ Status send_json_response(int socket_fd, const std::string& message_type, bool o
     return send_framed_string(socket_fd, response_json.dump());
 }
 
+std::string with_server_build_info(const std::string& message) {
+    const std::string server_build = std::string(__DATE__) + " " + std::string(__TIME__);
+    if (message.empty()) {
+        return "server_build=" + server_build;
+    }
+    return "server_build=" + server_build + "; " + message;
+}
+
+std::string with_server_context(const std::string& stage, const std::string& message) {
+    std::ostringstream message_stream;
+    message_stream << with_server_build_info(std::string()) << "; stage=" << stage;
+    if (!message.empty()) {
+        message_stream << "; " << message;
+    }
+    return message_stream.str();
+}
+
 Status handle_pair_request(
     int client_fd,
     ITrustedDeviceStore* trusted_store,
@@ -274,27 +315,47 @@ Status handle_pair_request(
     const bool remember_device = request_json.value("remember_device", true);
 
     if (remote_device_id.empty()) {
-        return send_json_response(client_fd, "pair_response", false, "Missing device_id");
+        return send_json_response(
+            client_fd,
+            "pair_response",
+            false,
+            with_server_context("server.pair.validate.device_id", "Missing device_id"));
     }
 
     if (!options.pairing_code.empty() && pairing_code != options.pairing_code) {
-        return send_json_response(client_fd, "pair_response", false, "Invalid pairing code");
+        return send_json_response(
+            client_fd,
+            "pair_response",
+            false,
+            with_server_context("server.pair.validate.pairing_code", "Invalid pairing code"));
     }
 
     if (remember_device && trusted_store != NULL) {
         const Status load_status = trusted_store->load();
         if (!load_status.ok()) {
-            return load_status;
+            return send_json_response(
+                client_fd,
+                "pair_response",
+                false,
+                with_server_context("server.pair.trusted_store.load", load_status.message));
         }
 
         const Status trust_status = trusted_store->trust_device(remote_device_id);
         if (!trust_status.ok()) {
-            return trust_status;
+            return send_json_response(
+                client_fd,
+                "pair_response",
+                false,
+                with_server_context("server.pair.trusted_store.trust", trust_status.message));
         }
 
         const Status save_status = trusted_store->save();
         if (!save_status.ok()) {
-            return save_status;
+            return send_json_response(
+                client_fd,
+                "pair_response",
+                false,
+                with_server_context("server.pair.trusted_store.save", save_status.message));
         }
     }
 
@@ -310,41 +371,69 @@ Status handle_auth_request(
     const std::string direction = request_json.value("direction", std::string());
 
     if (remote_device_id.empty()) {
-        return send_json_response(client_fd, "auth_response", false, "Missing device_id");
+        return send_json_response(
+            client_fd,
+            "auth_response",
+            false,
+            with_server_context("server.auth.validate.device_id", "Missing device_id"));
     }
 
     if (trusted_store == NULL) {
-        return send_json_response(client_fd, "auth_response", false, "Trusted device store is not configured");
+        return send_json_response(
+            client_fd,
+            "auth_response",
+            false,
+            with_server_context(
+                "server.auth.trusted_store.config",
+                "Trusted device store is not configured"));
     }
 
     const Status load_status = trusted_store->load();
     if (!load_status.ok()) {
-        return load_status;
+        return send_json_response(
+            client_fd,
+            "auth_response",
+            false,
+            with_server_context("server.auth.trusted_store.load", load_status.message));
     }
 
     if (!trusted_store->is_trusted(remote_device_id)) {
-        return send_json_response(client_fd, "auth_response", false, "Device is not trusted");
+        return send_json_response(
+            client_fd,
+            "auth_response",
+            false,
+            with_server_context("server.auth.trusted_store.verify", "Device is not trusted"));
     }
 
     if (direction != "pull") {
-        return send_json_response(client_fd, "auth_response", false, "Only pull direction is supported");
+        return send_json_response(
+            client_fd,
+            "auth_response",
+            false,
+            with_server_context(
+                "server.auth.validate.direction",
+                "Only pull direction is supported"));
     }
 
     std::stringstream backup_stream(std::ios::in | std::ios::out | std::ios::binary);
     const Status backup_status = data_manager.backup(backup_stream);
     if (!backup_status.ok()) {
-        return send_json_response(client_fd, "auth_response", false, backup_status.message);
+        return send_json_response(
+            client_fd,
+            "auth_response",
+            false,
+            with_server_context("server.auth.backup.create", backup_status.message));
     }
 
-    const std::string backup_bytes = backup_stream.str();
-    if (backup_bytes.empty()) {
-        return send_json_response(client_fd, "auth_response", false, "Backup produced empty archive");
-    }
-
-    std::istringstream validate_stream(backup_bytes, std::ios::binary);
-    const Status validate_status = internal::validate_backup_archive(validate_stream);
-    if (!validate_status.ok()) {
-        return send_json_response(client_fd, "auth_response", false, validate_status.message);
+    backup_stream.clear();
+    backup_stream.seekp(0, std::ios::end);
+    const std::streampos backup_end = backup_stream.tellp();
+    if (backup_end <= 0) {
+        return send_json_response(
+            client_fd,
+            "auth_response",
+            false,
+            with_server_context("server.auth.backup.empty", "Backup produced empty archive"));
     }
 
     const Status response_status = send_json_response(client_fd, "auth_response", true, std::string());
@@ -352,8 +441,9 @@ Status handle_auth_request(
         return response_status;
     }
 
-    std::istringstream send_stream(backup_bytes, std::ios::binary);
-    return send_framed_stream(client_fd, send_stream);
+    backup_stream.clear();
+    backup_stream.seekg(0, std::ios::beg);
+    return send_framed_stream(client_fd, backup_stream);
 }
 
 Status handle_client_connection(
@@ -361,32 +451,36 @@ Status handle_client_connection(
     const DataManager& data_manager,
     ITrustedDeviceStore* trusted_store,
     const ServerOptions& options) {
-    std::string request_message;
-    const Status receive_status = receive_framed_string(client_fd, &request_message);
-    if (!receive_status.ok()) {
-        return receive_status;
-    }
-
-    nlohmann::json request_json;
     try {
-        request_json = nlohmann::json::parse(request_message);
+        std::string request_message;
+        const Status receive_status = receive_framed_string(client_fd, &request_message);
+        if (!receive_status.ok()) {
+            return receive_status;
+        }
+
+        nlohmann::json request_json = nlohmann::json::parse(request_message);
+        if (!request_json.is_object()) {
+            return Status(StatusCode::kSyncProtocolError, "Protocol request must be a json object");
+        }
+
+        const std::string message_type = request_json.value("type", std::string());
+        if (message_type == "pair_request") {
+            return handle_pair_request(client_fd, trusted_store, request_json, options);
+        }
+        if (message_type == "auth_request") {
+            return handle_auth_request(client_fd, data_manager, trusted_store, request_json);
+        }
+
+        return Status(StatusCode::kSyncProtocolError, "Unsupported request type");
     } catch (const std::exception& exception) {
-        return Status(StatusCode::kSyncProtocolError, exception.what());
+        return Status(
+            StatusCode::kSyncProtocolError,
+            std::string("stage=server.client.exception; ") + exception.what());
+    } catch (...) {
+        return Status(
+            StatusCode::kSyncProtocolError,
+            "stage=server.client.exception; unknown exception");
     }
-
-    if (!request_json.is_object()) {
-        return Status(StatusCode::kSyncProtocolError, "Protocol request must be a json object");
-    }
-
-    const std::string message_type = request_json.value("type", std::string());
-    if (message_type == "pair_request") {
-        return handle_pair_request(client_fd, trusted_store, request_json, options);
-    }
-    if (message_type == "auth_request") {
-        return handle_auth_request(client_fd, data_manager, trusted_store, request_json);
-    }
-
-    return Status(StatusCode::kSyncProtocolError, "Unsupported request type");
 }
 
 std::string port_to_string(int port) {
@@ -430,34 +524,74 @@ bool detect_local_reachable_ipv4(std::string* local_ip) {
     }
 
     const int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (socket_fd < 0) {
-        return false;
-    }
+    if (socket_fd >= 0) {
+        struct sockaddr_in remote_addr;
+        std::memset(&remote_addr, 0, sizeof(remote_addr));
+        remote_addr.sin_family = AF_INET;
+        remote_addr.sin_port = htons(53);
+        remote_addr.sin_addr.s_addr = htonl(0x08080808U);
 
-    struct sockaddr_in remote_addr;
-    std::memset(&remote_addr, 0, sizeof(remote_addr));
-    remote_addr.sin_family = AF_INET;
-    remote_addr.sin_port = htons(53);
-    remote_addr.sin_addr.s_addr = htonl(0x08080808U);
-
-    if (connect(socket_fd, reinterpret_cast<const struct sockaddr*>(&remote_addr), sizeof(remote_addr)) != 0) {
+        if (connect(socket_fd, reinterpret_cast<const struct sockaddr*>(&remote_addr), sizeof(remote_addr)) == 0) {
+            struct sockaddr_storage local_addr;
+            std::memset(&local_addr, 0, sizeof(local_addr));
+            socklen_t local_addr_len = sizeof(local_addr);
+            const int get_name_status = getsockname(
+                socket_fd,
+                reinterpret_cast<struct sockaddr*>(&local_addr),
+                &local_addr_len);
+            if (get_name_status == 0 &&
+                sockaddr_to_ip(local_addr, local_addr_len, local_ip) &&
+                !is_wildcard_bind_host(*local_ip) &&
+                *local_ip != "127.0.0.1") {
+                internal::close_socket_fd(socket_fd);
+                return true;
+            }
+        }
         internal::close_socket_fd(socket_fd);
+    }
+
+#ifndef _WIN32
+    struct ifaddrs* interface_list = NULL;
+    if (getifaddrs(&interface_list) != 0 || interface_list == NULL) {
         return false;
     }
 
-    struct sockaddr_storage local_addr;
-    std::memset(&local_addr, 0, sizeof(local_addr));
-    socklen_t local_addr_len = sizeof(local_addr);
-    const int get_name_status = getsockname(
-        socket_fd,
-        reinterpret_cast<struct sockaddr*>(&local_addr),
-        &local_addr_len);
-    internal::close_socket_fd(socket_fd);
+    for (struct ifaddrs* it = interface_list; it != NULL; it = it->ifa_next) {
+        if (it->ifa_addr == NULL) {
+            continue;
+        }
+        if (it->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        if ((it->ifa_flags & IFF_UP) == 0) {
+            continue;
+        }
+        if ((it->ifa_flags & IFF_LOOPBACK) != 0) {
+            continue;
+        }
 
-    if (get_name_status != 0) {
-        return false;
+        const struct sockaddr_in* ipv4_addr =
+            reinterpret_cast<const struct sockaddr_in*>(it->ifa_addr);
+        char ip_buffer[INET_ADDRSTRLEN];
+        std::memset(ip_buffer, 0, sizeof(ip_buffer));
+        if (inet_ntop(AF_INET, &ipv4_addr->sin_addr, ip_buffer, sizeof(ip_buffer)) == NULL) {
+            continue;
+        }
+
+        const std::string candidate_ip = ip_buffer;
+        if (candidate_ip.empty() || is_wildcard_bind_host(candidate_ip) ||
+            candidate_ip == "127.0.0.1") {
+            continue;
+        }
+
+        *local_ip = candidate_ip;
+        freeifaddrs(interface_list);
+        return true;
     }
-    return sockaddr_to_ip(local_addr, local_addr_len, local_ip);
+
+    freeifaddrs(interface_list);
+#endif
+    return false;
 }
 
 Status create_listen_socket(
@@ -527,6 +661,9 @@ Status create_listen_socket(
             actual_host = options.bind_host;
         }
         if (is_wildcard_bind_host(actual_host) && !detect_local_reachable_ipv4(&actual_host)) {
+            actual_host = "127.0.0.1";
+        }
+        if (is_wildcard_bind_host(actual_host)) {
             actual_host = "127.0.0.1";
         }
 

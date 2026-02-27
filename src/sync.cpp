@@ -2,6 +2,7 @@
 #include <STManager/tcp_transport.h>
 
 #include "discovery_mdns.h"
+#include "fd_stream.h"
 #include "platform_compat.h"
 #include "path_safety.h"
 #include "sync_protocol.h"
@@ -9,6 +10,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
+#include <cstring>
 #include <ctime>
 #include <functional>
 #include <fstream>
@@ -86,66 +89,146 @@ bool is_connectable_host(const std::string& host) {
     return !host.empty() && host != "0.0.0.0";
 }
 
-bool is_safe_extension_name(const std::string& extension_name) {
-    if (extension_name.empty() || extension_name == "." || extension_name == "..") {
-        return false;
+Status with_stage(const std::string& stage, const Status& status) {
+    if (status.ok()) {
+        return status;
     }
-    if (extension_name.find('/') != std::string::npos ||
-        extension_name.find('\\') != std::string::npos) {
-        return false;
+
+    std::ostringstream message_stream;
+    message_stream << "stage=" << stage;
+    if (!status.message.empty()) {
+        message_stream << "; " << status.message;
     }
-    return true;
+    return Status(status.code, message_stream.str());
 }
 
-void normalize_extension_names(std::vector<std::string>* extension_names) {
-    if (extension_names == NULL) {
+Status make_staged_error(
+    StatusCode code,
+    const std::string& stage,
+    const std::string& message) {
+    std::ostringstream message_stream;
+    message_stream << "stage=" << stage;
+    if (!message.empty()) {
+        message_stream << "; " << message;
+    }
+    return Status(code, message_stream.str());
+}
+
+void rewind_input_stream_if_possible(std::istream& in) {
+    if (in.bad()) {
         return;
     }
 
-    std::vector<std::string> filtered_names;
-    filtered_names.reserve(extension_names->size());
-    for (std::vector<std::string>::const_iterator it = extension_names->begin();
-         it != extension_names->end();
-         ++it) {
-        if (is_safe_extension_name(*it)) {
-            filtered_names.push_back(*it);
-        }
+    in.clear();
+    in.seekg(0, std::ios::beg);
+
+    if (in.fail() && !in.bad()) {
+        in.clear();
+    }
+}
+
+class CountingOutputStreamBuf : public std::streambuf {
+public:
+    explicit CountingOutputStreamBuf(std::streambuf* destination_buffer)
+        : destination_buffer_(destination_buffer),
+          bytes_written_(0),
+          has_error_(false) {}
+
+    uint64_t bytes_written() const {
+        return bytes_written_;
     }
 
-    std::sort(filtered_names.begin(), filtered_names.end());
-    filtered_names.erase(
-        std::unique(filtered_names.begin(), filtered_names.end()),
-        filtered_names.end());
-    extension_names->swap(filtered_names);
-}
+    bool has_error() const {
+        return has_error_;
+    }
 
-std::vector<std::string> default_ignored_extensions() {
-    std::vector<std::string> extension_names;
-    extension_names.push_back("assets");
-    extension_names.push_back("attachments");
-    extension_names.push_back("caption");
-    extension_names.push_back("connection-manager");
-    extension_names.push_back("expressions");
-    extension_names.push_back("gallery");
-    extension_names.push_back("memory");
-    extension_names.push_back("quick-reply");
-    extension_names.push_back("regex");
-    extension_names.push_back("stable-diffusion");
-    extension_names.push_back("token-counter");
-    extension_names.push_back("translate");
-    extension_names.push_back("tts");
-    extension_names.push_back("vectors");
-    return extension_names;
-}
+protected:
+    std::streamsize xsputn(const char* data, std::streamsize size) override {
+        if (size <= 0) {
+            return 0;
+        }
+        if (destination_buffer_ == NULL) {
+            has_error_ = true;
+            return 0;
+        }
+
+        const std::streamsize written_size = destination_buffer_->sputn(data, size);
+        if (written_size > 0) {
+            bytes_written_ += static_cast<uint64_t>(written_size);
+        }
+        if (written_size != size) {
+            has_error_ = true;
+        }
+        return written_size;
+    }
+
+    int overflow(int value) override {
+        if (traits_type::eq_int_type(value, traits_type::eof())) {
+            return traits_type::not_eof(value);
+        }
+        if (destination_buffer_ == NULL) {
+            has_error_ = true;
+            return traits_type::eof();
+        }
+
+        const int out_value = destination_buffer_->sputc(static_cast<char>(value));
+        if (traits_type::eq_int_type(out_value, traits_type::eof())) {
+            has_error_ = true;
+            return traits_type::eof();
+        }
+
+        ++bytes_written_;
+        return out_value;
+    }
+
+    int sync() override {
+        if (destination_buffer_ == NULL) {
+            has_error_ = true;
+            return -1;
+        }
+
+        const int sync_result = destination_buffer_->pubsync();
+        if (sync_result != 0) {
+            has_error_ = true;
+        }
+        return sync_result;
+    }
+
+private:
+    std::streambuf* destination_buffer_;
+    uint64_t bytes_written_;
+    bool has_error_;
+};
+
+class CountingOutputStream : public std::ostream {
+public:
+    explicit CountingOutputStream(std::streambuf* destination_buffer)
+        : std::ostream(NULL),
+          buffer_(destination_buffer) {
+        rdbuf(&buffer_);
+    }
+
+    uint64_t bytes_written() const {
+        return buffer_.bytes_written();
+    }
+
+    bool has_error() const {
+        return buffer_.has_error();
+    }
+
+private:
+    CountingOutputStreamBuf buffer_;
+};
 
 }  // namespace
 
 class SyncTaskHandle::Impl {
 public:
-    explicit Impl(const SyncTaskInfo& task_info)
+    Impl(SyncTaskMode task_mode, const DeviceInfo& device_info)
         : task_state_(SyncTaskState::kStarting),
           task_status_(Status::ok_status()),
-          task_info_(task_info),
+          task_mode_(task_mode),
+          device_info_(device_info),
           stop_requested_(false),
           worker_thread_(),
           interrupt_callback_() {}
@@ -174,8 +257,8 @@ public:
 
     void set_local_endpoint(const std::string& local_ip, int local_port) {
         std::lock_guard<std::mutex> lock(mutex_);
-        task_info_.local_ip = local_ip;
-        task_info_.local_port = local_port;
+        device_info_.host = local_ip;
+        device_info_.port = local_port;
     }
 
     void request_stop() {
@@ -228,14 +311,19 @@ public:
         return task_state_;
     }
 
+    SyncTaskMode mode() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return task_mode_;
+    }
+
     Status status() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return task_status_;
     }
 
-    SyncTaskInfo info() const {
+    DeviceInfo info() const {
         std::lock_guard<std::mutex> lock(mutex_);
-        return task_info_;
+        return device_info_;
     }
 
     bool is_running() const {
@@ -271,7 +359,8 @@ private:
     mutable std::mutex mutex_;
     SyncTaskState task_state_;
     Status task_status_;
-    SyncTaskInfo task_info_;
+    SyncTaskMode task_mode_;
+    DeviceInfo device_info_;
     std::atomic<bool> stop_requested_;
     std::thread worker_thread_;
     std::function<void()> interrupt_callback_;
@@ -282,12 +371,13 @@ namespace {
 std::unique_ptr<SyncTaskHandle> make_finished_sync_task_handle(
     SyncTaskMode task_mode,
     const std::string& device_id,
+    const std::string& device_name,
     const Status& task_status) {
-    SyncTaskInfo task_info;
-    task_info.mode = task_mode;
-    task_info.device_id = device_id;
+    DeviceInfo device_info;
+    device_info.device_id = device_id;
+    device_info.device_name = device_name.empty() ? device_id : device_name;
 
-    std::shared_ptr<SyncTaskHandle::Impl> task_impl(new SyncTaskHandle::Impl(task_info));
+    std::shared_ptr<SyncTaskHandle::Impl> task_impl(new SyncTaskHandle::Impl(task_mode, device_info));
     task_impl->mark_finished(task_status);
     return std::unique_ptr<SyncTaskHandle>(new SyncTaskHandle(task_impl));
 }
@@ -329,6 +419,13 @@ SyncTaskState SyncTaskHandle::state() const {
     return impl_->state();
 }
 
+SyncTaskMode SyncTaskHandle::mode() const {
+    if (!impl_) {
+        return SyncTaskMode::kServe;
+    }
+    return impl_->mode();
+}
+
 Status SyncTaskHandle::last_status() const {
     if (!impl_) {
         return Status(StatusCode::kSyncProtocolError, "Sync task handle is not initialized");
@@ -336,9 +433,9 @@ Status SyncTaskHandle::last_status() const {
     return impl_->status();
 }
 
-SyncTaskInfo SyncTaskHandle::info() const {
+DeviceInfo SyncTaskHandle::info() const {
     if (!impl_) {
-        return SyncTaskInfo();
+        return DeviceInfo();
     }
     return impl_->info();
 }
@@ -353,56 +450,64 @@ bool SyncTaskHandle::is_running() const {
 SyncManager::SyncManager(
     const DataManager& data_manager,
     const std::string& local_device_id,
+    const std::string& local_device_name,
     ISyncTransport* transport,
     IDeviceDiscovery* discovery,
     ITrustedDeviceStore* trusted_store)
     : data_manager_(data_manager),
       local_device_id_(local_device_id),
+      local_device_name_(local_device_name.empty() ? local_device_id : local_device_name),
       transport_(transport),
       discovery_(discovery),
       trusted_store_(trusted_store) {}
 
 Status SyncManager::discover_devices(std::vector<DeviceInfo>* devices) const {
     if (discovery_ == NULL) {
-        return Status(StatusCode::kDiscoveryError, "Device discovery is not configured");
+        return make_staged_error(
+            StatusCode::kDiscoveryError,
+            "discover.config",
+            "Device discovery is not configured");
     }
 
     const Status start_status = discovery_->start();
     if (!start_status.ok()) {
-        return start_status;
+        return with_stage("discover.start", start_status);
     }
 
-    return discovery_->list_devices(devices);
+    return with_stage("discover.list", discovery_->list_devices(devices));
 }
 
 Status SyncManager::pair_device(const DeviceInfo& device_info, const PairingOptions& options) {
     if (transport_ == NULL || trusted_store_ == NULL) {
-        return Status(StatusCode::kSyncProtocolError, "Transport or trusted device store is not configured");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "pair.init",
+            "Transport or trusted device store is not configured");
     }
 
     const Status load_status = trusted_store_->load();
     if (!load_status.ok()) {
-        return load_status;
+        return with_stage("pair.trusted_store.load", load_status);
     }
 
     const Status connect_status = transport_->connect(device_info);
     if (!connect_status.ok()) {
-        return connect_status;
+        return with_stage("pair.transport.connect", connect_status);
     }
 
     const std::string pair_request_message =
-        internal::build_pair_request_message(local_device_id_, options);
+        internal::build_pair_request_message(local_device_id_, local_device_name_, options);
     const Status send_status = transport_->send_message(pair_request_message);
     if (!send_status.ok()) {
         transport_->disconnect();
-        return send_status;
+        return with_stage("pair.protocol.send_request", send_status);
     }
 
     std::string pair_response_message;
     const Status receive_status = transport_->receive_message(&pair_response_message);
     if (!receive_status.ok()) {
         transport_->disconnect();
-        return receive_status;
+        return with_stage("pair.protocol.receive_response", receive_status);
     }
 
     bool is_accepted = false;
@@ -411,7 +516,7 @@ Status SyncManager::pair_device(const DeviceInfo& device_info, const PairingOpti
         internal::parse_pair_response_message(pair_response_message, &is_accepted, &response_error);
     if (!parse_status.ok()) {
         transport_->disconnect();
-        return parse_status;
+        return with_stage("pair.protocol.parse_response", parse_status);
     }
 
     transport_->disconnect();
@@ -420,7 +525,7 @@ Status SyncManager::pair_device(const DeviceInfo& device_info, const PairingOpti
         if (response_error.empty()) {
             response_error = "Pairing rejected by remote device";
         }
-        return Status(StatusCode::kUnauthorized, response_error);
+        return make_staged_error(StatusCode::kUnauthorized, "pair.remote.reject", response_error);
     }
 
     if (!options.remember_device) {
@@ -429,37 +534,43 @@ Status SyncManager::pair_device(const DeviceInfo& device_info, const PairingOpti
 
     const Status trust_status = trusted_store_->trust_device(device_info.device_id);
     if (!trust_status.ok()) {
-        return trust_status;
+        return with_stage("pair.trusted_store.trust", trust_status);
     }
 
-    return trusted_store_->save();
+    return with_stage("pair.trusted_store.save", trusted_store_->save());
 }
 
 Status SyncManager::authorize_remote(const DeviceInfo& device_info, SyncDirection direction) const {
     if (transport_ == NULL || trusted_store_ == NULL) {
-        return Status(StatusCode::kSyncProtocolError, "Transport or trusted device store is not configured");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "auth.init",
+            "Transport or trusted device store is not configured");
     }
 
     const Status load_status = trusted_store_->load();
     if (!load_status.ok()) {
-        return load_status;
+        return with_stage("auth.trusted_store.load", load_status);
     }
 
     if (!trusted_store_->is_trusted(device_info.device_id)) {
-        return Status(StatusCode::kUnauthorized, "Device is not trusted. Pairing is required before sync");
+        return make_staged_error(
+            StatusCode::kUnauthorized,
+            "auth.trusted_store.verify",
+            "Device is not trusted. Pairing is required before sync");
     }
 
     const std::string auth_request_message =
-        internal::build_auth_request_message(local_device_id_, direction);
+        internal::build_auth_request_message(local_device_id_, local_device_name_, direction);
     const Status send_status = transport_->send_message(auth_request_message);
     if (!send_status.ok()) {
-        return send_status;
+        return with_stage("auth.protocol.send_request", send_status);
     }
 
     std::string auth_response_message;
     const Status receive_status = transport_->receive_message(&auth_response_message);
     if (!receive_status.ok()) {
-        return receive_status;
+        return with_stage("auth.protocol.receive_response", receive_status);
     }
 
     bool is_accepted = false;
@@ -467,14 +578,19 @@ Status SyncManager::authorize_remote(const DeviceInfo& device_info, SyncDirectio
     const Status parse_status =
         internal::parse_auth_response_message(auth_response_message, &is_accepted, &response_error);
     if (!parse_status.ok()) {
-        return parse_status;
+        return with_stage("auth.protocol.parse_response", parse_status);
     }
 
     if (!is_accepted) {
         if (response_error.empty()) {
             response_error = "Remote authorization was rejected";
         }
-        return Status(StatusCode::kUnauthorized, response_error);
+        if (response_error.find("server_build=") == std::string::npos) {
+            response_error =
+                "remote_server_context=missing; hint=remote serve may be an old build; " +
+                response_error;
+        }
+        return make_staged_error(StatusCode::kUnauthorized, "auth.remote.reject", response_error);
     }
 
     return Status::ok_status();
@@ -482,63 +598,69 @@ Status SyncManager::authorize_remote(const DeviceInfo& device_info, SyncDirectio
 
 Status SyncManager::push_to_device(const DeviceInfo& device_info, const SyncOptions& options) const {
     if (!data_manager_.is_valid()) {
-        return data_manager_.last_status();
+        return with_stage("push.data_manager", data_manager_.last_status());
     }
 
     if (transport_ == NULL) {
-        return Status(StatusCode::kSyncProtocolError, "Transport is not configured");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "push.transport",
+            "Transport is not configured");
     }
 
     const Status connect_status = transport_->connect(device_info);
     if (!connect_status.ok()) {
-        return connect_status;
+        return with_stage("push.transport.connect", connect_status);
     }
 
     const Status auth_status = authorize_remote(device_info, SyncDirection::kPush);
     if (!auth_status.ok()) {
         transport_->disconnect();
-        return auth_status;
+        return with_stage("push.auth", auth_status);
     }
 
     std::stringstream backup_stream(std::ios::in | std::ios::out | std::ios::binary);
     const Status backup_status = data_manager_.backup(backup_stream, options.backup_options);
     if (!backup_status.ok()) {
         transport_->disconnect();
-        return backup_status;
+        return with_stage("push.backup.create", backup_status);
     }
 
     backup_stream.seekg(0, std::ios::beg);
     const Status send_status = transport_->send_stream(backup_stream);
     transport_->disconnect();
 
-    return send_status;
+    return with_stage("push.stream.send", send_status);
 }
 
 Status SyncManager::pull_from_device(const DeviceInfo& device_info, const SyncOptions& options) const {
     if (!data_manager_.is_valid()) {
-        return data_manager_.last_status();
+        return with_stage("pull.data_manager", data_manager_.last_status());
     }
 
     if (transport_ == NULL) {
-        return Status(StatusCode::kSyncProtocolError, "Transport is not configured");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "pull.transport",
+            "Transport is not configured");
     }
 
     const Status connect_status = transport_->connect(device_info);
     if (!connect_status.ok()) {
-        return connect_status;
+        return with_stage("pull.transport.connect", connect_status);
     }
 
     const Status auth_status = authorize_remote(device_info, SyncDirection::kPull);
     if (!auth_status.ok()) {
         transport_->disconnect();
-        return auth_status;
+        return with_stage("pull.auth", auth_status);
     }
 
     std::stringstream backup_stream(std::ios::in | std::ios::out | std::ios::binary);
     const Status receive_status = transport_->receive_stream(backup_stream);
     if (!receive_status.ok()) {
         transport_->disconnect();
-        return receive_status;
+        return with_stage("pull.stream.receive", receive_status);
     }
 
     backup_stream.seekg(0, std::ios::beg);
@@ -548,10 +670,9 @@ Status SyncManager::pull_from_device(const DeviceInfo& device_info, const SyncOp
         : options.destination_root_override;
 
     RestoreOptions restore_options;
-    restore_options.ignored_extension_names = options.ignored_extension_names;
     const Status restore_status = data_manager_.restore(backup_stream, restore_root, restore_options);
     transport_->disconnect();
-    return restore_status;
+    return with_stage("pull.restore.apply", restore_status);
 }
 
 Status SyncManager::sync(
@@ -704,12 +825,15 @@ Status Manager::ensure_initialized() const {
 
 Status Manager::discover_devices(std::vector<DeviceInfo>* devices) const {
     if (devices == NULL) {
-        return Status(StatusCode::kSyncProtocolError, "devices output cannot be null");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.discover.args",
+            "devices output cannot be null");
     }
 
     const Status initialized_status = ensure_initialized();
     if (!initialized_status.ok()) {
-        return initialized_status;
+        return with_stage("manager.discover.init", initialized_status);
     }
 
     TcpSyncTransport transport;
@@ -718,11 +842,12 @@ Status Manager::discover_devices(std::vector<DeviceInfo>* devices) const {
     SyncManager sync_manager(
         data_manager_,
         local_device_id_,
+        local_device_name_,
         &transport,
         &discovery,
         &trusted_store);
 
-    return sync_manager.discover_devices(devices);
+    return with_stage("manager.discover.sync", sync_manager.discover_devices(devices));
 }
 
 Status Manager::resolve_pair_target(
@@ -740,7 +865,7 @@ Status Manager::resolve_pair_target(
 
     const Status initialized_status = ensure_initialized();
     if (!initialized_status.ok()) {
-        return initialized_status;
+        return with_stage("manager.resolve_pair_target.init", initialized_status);
     }
 
     if (request.host.empty() && request.port > 0) {
@@ -762,7 +887,7 @@ Status Manager::resolve_pair_target(
     std::vector<DeviceInfo> discovered_devices;
     const Status discover_status = discover_devices(&discovered_devices);
     if (!discover_status.ok()) {
-        return discover_status;
+        return with_stage("manager.resolve_pair_target.discover", discover_status);
     }
 
     if (request.device_id.empty()) {
@@ -819,27 +944,33 @@ Status Manager::resolve_pair_target(
 }
 
 std::unique_ptr<SyncTaskHandle> Manager::serve_sync(const ServeSyncOptions& options) const {
+    const std::string effective_device_name = options.device_name.empty()
+        ? local_device_name_
+        : options.device_name;
+
     const Status initialized_status = ensure_initialized();
     if (!initialized_status.ok()) {
         return make_finished_sync_task_handle(
             SyncTaskMode::kServe,
             local_device_id_,
+            effective_device_name,
             initialized_status);
     }
 
-    SyncTaskInfo task_info;
-    task_info.mode = SyncTaskMode::kServe;
-    task_info.device_id = local_device_id_;
-    task_info.local_ip = options.server_options.bind_host;
-    task_info.local_port = options.server_options.port;
+    DeviceInfo task_device_info;
+    task_device_info.device_id = local_device_id_;
+    task_device_info.device_name = effective_device_name;
+    task_device_info.host = options.server_options.bind_host;
+    task_device_info.port = options.server_options.port;
 
-    std::shared_ptr<SyncTaskHandle::Impl> task_impl(new SyncTaskHandle::Impl(task_info));
+    std::shared_ptr<SyncTaskHandle::Impl> task_impl(
+        new SyncTaskHandle::Impl(SyncTaskMode::kServe, task_device_info));
     std::unique_ptr<SyncTaskHandle> task_handle(new SyncTaskHandle(task_impl));
     SyncTaskHandle::Impl* task_impl_ptr = task_impl.get();
 
     ServerOptions server_options = options.server_options;
     if (server_options.advertise_name.empty()) {
-        server_options.advertise_name = local_device_name_;
+        server_options.advertise_name = effective_device_name;
     }
 
     const DataManager data_manager = data_manager_;
@@ -862,7 +993,7 @@ std::unique_ptr<SyncTaskHandle> Manager::serve_sync(const ServeSyncOptions& opti
             &SyncTaskHandle::Impl::serve_started_callback,
             task_impl_ptr);
         if (!run_status.ok()) {
-            return run_status;
+            return with_stage("serve.server.run", run_status);
         }
 
         if (task_impl_ptr->stop_requested()) {
@@ -879,58 +1010,66 @@ Status Manager::pair_sync(
     const PairSyncOptions& options,
     PairSyncResult* result) const {
     if (result == NULL) {
-        return Status(StatusCode::kSyncProtocolError, "result output cannot be null");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.pair_sync.args",
+            "result output cannot be null");
     }
 
     const Status initialized_status = ensure_initialized();
     if (!initialized_status.ok()) {
-        return initialized_status;
+        return with_stage("manager.pair_sync.init", initialized_status);
     }
 
     if (device_info.device_id.empty()) {
-        return Status(StatusCode::kSyncProtocolError, "device_id cannot be empty");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.pair_sync.args.device_id",
+            "device_id cannot be empty");
     }
     if (!is_connectable_host(device_info.host) || device_info.port <= 0) {
-        return Status(StatusCode::kSyncProtocolError, "remote device host/port is not connectable");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.pair_sync.args.endpoint",
+            "remote device host/port is not connectable");
     }
 
     TcpSyncTransport transport;
     MdnsDeviceDiscovery discovery;
     JsonTrustedDeviceStore trusted_store(trusted_store_path_);
+    const std::string effective_device_name = options.device_name.empty()
+        ? local_device_name_
+        : options.device_name;
     SyncManager sync_manager(
         data_manager_,
         local_device_id_,
+        effective_device_name,
         &transport,
         &discovery,
         &trusted_store);
 
     const Status load_status = trusted_store.load();
     if (!load_status.ok()) {
-        return load_status;
+        return with_stage("manager.pair_sync.trusted_store.load", load_status);
     }
 
     SyncOptions effective_sync_options = options.sync_options;
-    if (effective_sync_options.ignored_extension_names.empty()) {
-        effective_sync_options.ignored_extension_names = default_ignored_extensions();
-    }
-    normalize_extension_names(&effective_sync_options.ignored_extension_names);
 
     result->selected_device = device_info;
     result->paired_this_time = false;
-    result->effective_ignored_extensions = effective_sync_options.ignored_extension_names;
 
     bool paired_this_time = false;
     if (!trusted_store.is_trusted(device_info.device_id)) {
         const Status pair_status = sync_manager.pair_device(device_info, options.pairing_options);
         if (!pair_status.ok()) {
-            return pair_status;
+            return with_stage("manager.pair_sync.pair", pair_status);
         }
         paired_this_time = true;
     }
 
     const Status pull_status = sync_manager.pull_from_device(device_info, effective_sync_options);
     if (!pull_status.ok()) {
-        return pull_status;
+        return with_stage("manager.pair_sync.pull", pull_status);
     }
 
     result->paired_this_time = paired_this_time;
@@ -939,36 +1078,51 @@ Status Manager::pair_sync(
 
 Status Manager::export_backup(const ExportBackupOptions& options, ExportBackupResult* result) const {
     if (result == NULL) {
-        return Status(StatusCode::kSyncProtocolError, "result output cannot be null");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.export_backup.args",
+            "result output cannot be null");
     }
 
     const Status initialized_status = ensure_initialized();
     if (!initialized_status.ok()) {
-        return initialized_status;
+        return with_stage("manager.export_backup.init", initialized_status);
     }
 
     if (options.file_path.empty()) {
-        return Status(StatusCode::kSyncProtocolError, "backup export file_path cannot be empty");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.export_backup.args.file_path",
+            "backup export file_path cannot be empty");
     }
 
     std::ofstream out_file(options.file_path.c_str(), std::ios::binary | std::ios::trunc);
     if (!out_file.is_open()) {
-        return Status(StatusCode::kIoError, "Failed opening backup export file for write");
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.export_backup.file.open",
+            "Failed opening backup export file for write");
     }
 
     const Status backup_status = data_manager_.backup(out_file, options.backup_options);
     if (!backup_status.ok()) {
-        return backup_status;
+        return with_stage("manager.export_backup.create", backup_status);
     }
 
     out_file.flush();
     if (!out_file) {
-        return Status(StatusCode::kIoError, "Failed writing backup export file");
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.export_backup.file.flush",
+            "Failed writing backup export file");
     }
 
     const std::streampos end_position = out_file.tellp();
     if (end_position < 0) {
-        return Status(StatusCode::kIoError, "Failed determining backup export size");
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.export_backup.file.size",
+            "Failed determining backup export size");
     }
 
     result->file_path = options.file_path;
@@ -976,22 +1130,221 @@ Status Manager::export_backup(const ExportBackupOptions& options, ExportBackupRe
     return Status::ok_status();
 }
 
-Status Manager::restore_backup(const RestoreBackupOptions& options) const {
-    const Status initialized_status = ensure_initialized();
-    if (!initialized_status.ok()) {
-        return initialized_status;
+Status Manager::export_backup(
+    std::ostream& out,
+    const BackupOptions& backup_options,
+    uint64_t* bytes_written) const {
+    if (bytes_written != NULL) {
+        *bytes_written = 0;
     }
 
+    const Status initialized_status = ensure_initialized();
+    if (!initialized_status.ok()) {
+        return with_stage("manager.export_backup_stream.init", initialized_status);
+    }
+
+    if (out.rdbuf() == NULL || !out.good()) {
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.export_backup_stream.args.out",
+            "output stream is not writable");
+    }
+
+    CountingOutputStream counting_out(out.rdbuf());
+    const Status backup_status = data_manager_.backup(counting_out, backup_options);
+    if (!backup_status.ok()) {
+        return with_stage("manager.export_backup_stream.create", backup_status);
+    }
+
+    counting_out.flush();
+    if (!counting_out || counting_out.has_error()) {
+        out.setstate(std::ios::badbit);
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.export_backup_stream.flush",
+            "Failed writing backup to output stream");
+    }
+
+    out.flush();
+    if (!out) {
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.export_backup_stream.flush",
+            "Failed flushing output stream");
+    }
+
+    if (bytes_written != NULL) {
+        *bytes_written = counting_out.bytes_written();
+    }
+    return Status::ok_status();
+}
+
+Status Manager::export_backup_to_fd(
+    int fd,
+    const BackupOptions& backup_options,
+    uint64_t* bytes_written) const {
+    if (bytes_written != NULL) {
+        *bytes_written = 0;
+    }
+
+    const Status initialized_status = ensure_initialized();
+    if (!initialized_status.ok()) {
+        return with_stage("manager.export_backup_fd.init", initialized_status);
+    }
+
+    if (fd < 0) {
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.export_backup_fd.args.fd",
+            "fd must be non-negative");
+    }
+
+#ifdef _WIN32
+    (void)backup_options;
+    return make_staged_error(
+        StatusCode::kIoError,
+        "manager.export_backup_fd.unsupported",
+        "fd export is not supported on Windows builds");
+#else
+    internal::FdOutputStream fd_out(fd);
+    const Status backup_status = data_manager_.backup(fd_out, backup_options);
+    if (!backup_status.ok()) {
+        return with_stage("manager.export_backup_fd.create", backup_status);
+    }
+
+    fd_out.flush();
+    if (!fd_out || fd_out.has_error()) {
+        std::ostringstream message_stream;
+        message_stream << "Failed writing backup to file descriptor";
+        const int error_number = fd_out.last_error_number();
+        if (error_number != 0) {
+            message_stream << ": " << std::strerror(error_number);
+        }
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.export_backup_fd.flush",
+            message_stream.str());
+    }
+
+    if (bytes_written != NULL) {
+        *bytes_written = fd_out.bytes_written();
+    }
+    return Status::ok_status();
+#endif
+}
+
+Status Manager::restore_backup(std::istream& in) const {
+    const Status initialized_status = ensure_initialized();
+    if (!initialized_status.ok()) {
+        return with_stage("manager.restore_backup_stream.init", initialized_status);
+    }
+
+    if (in.rdbuf() == NULL || in.bad()) {
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.restore_backup_stream.args.in",
+            "input stream is not readable");
+    }
+
+    rewind_input_stream_if_possible(in);
+    if (in.bad()) {
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.restore_backup_stream.args.in",
+            "input stream is not readable");
+    }
+
+    const Status restore_status = data_manager_.restore(in, data_manager_.root_path);
+    if (!restore_status.ok()) {
+        return with_stage("manager.restore_backup_stream.apply", restore_status);
+    }
+
+    return Status::ok_status();
+}
+
+Status Manager::restore_backup_from_fd(int fd) const {
+    const Status initialized_status = ensure_initialized();
+    if (!initialized_status.ok()) {
+        return with_stage("manager.restore_backup_fd.init", initialized_status);
+    }
+
+    if (fd < 0) {
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.restore_backup_fd.args.fd",
+            "fd must be non-negative");
+    }
+
+#ifdef _WIN32
+    (void)fd;
+    return make_staged_error(
+        StatusCode::kIoError,
+        "manager.restore_backup_fd.unsupported",
+        "fd restore is not supported on Windows builds");
+#else
+    const off_t seek_status = lseek(fd, 0, SEEK_SET);
+    if (seek_status < 0 && errno != ESPIPE) {
+        std::ostringstream message_stream;
+        message_stream << "Failed seeking backup file descriptor to start: "
+                       << std::strerror(errno);
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.restore_backup_fd.read",
+            message_stream.str());
+    }
+
+    internal::FdInputStream fd_in(fd);
+    if (fd_in.rdbuf() == NULL || fd_in.bad()) {
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.restore_backup_fd.read",
+            "file descriptor stream is not readable");
+    }
+
+    const Status restore_status = restore_backup(static_cast<std::istream&>(fd_in));
+    if (!restore_status.ok()) {
+        return with_stage("manager.restore_backup_fd.apply", restore_status);
+    }
+
+    if (fd_in.bad() || fd_in.has_error()) {
+        std::ostringstream message_stream;
+        message_stream << "Failed reading backup from file descriptor";
+        const int error_number = fd_in.last_error_number();
+        if (error_number != 0) {
+            message_stream << ": " << std::strerror(error_number);
+        }
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.restore_backup_fd.read",
+            message_stream.str());
+    }
+
+    return Status::ok_status();
+#endif
+}
+
+Status Manager::restore_backup(const RestoreBackupOptions& options) const {
     if (options.file_path.empty()) {
-        return Status(StatusCode::kSyncProtocolError, "backup restore file_path cannot be empty");
+        return make_staged_error(
+            StatusCode::kSyncProtocolError,
+            "manager.restore_backup.args.file_path",
+            "backup restore file_path cannot be empty");
     }
 
     std::ifstream in_file(options.file_path.c_str(), std::ios::binary);
     if (!in_file.is_open()) {
-        return Status(StatusCode::kIoError, "Failed opening backup file for read");
+        return make_staged_error(
+            StatusCode::kIoError,
+            "manager.restore_backup.file.open",
+            "Failed opening backup file for read");
     }
 
-    return data_manager_.restore(in_file, data_manager_.root_path);
+    const Status restore_status = restore_backup(static_cast<std::istream&>(in_file));
+    if (!restore_status.ok()) {
+        return with_stage("manager.restore_backup.apply", restore_status);
+    }
+
+    return Status::ok_status();
 }
 
 }  // namespace STManager

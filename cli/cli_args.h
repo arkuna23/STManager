@@ -22,6 +22,7 @@ struct ServeBackupArgs {
     std::string bind_host;
     int port;
     std::string pairing_code;
+    std::string device_name;
     bool advertise;
 
     ServeBackupArgs()
@@ -29,6 +30,7 @@ struct ServeBackupArgs {
           bind_host("0.0.0.0"),
           port(kDefaultSyncPort),
           pairing_code(),
+          device_name(),
           advertise(true) {}
 };
 
@@ -38,9 +40,17 @@ struct PairRestoreArgs {
     int port;
     std::string device_id;
     std::string pairing_code;
+    std::string device_name;
     std::string destination_root;
 
-    PairRestoreArgs() : root_path(), host(), port(0), device_id(), pairing_code(), destination_root() {}
+    PairRestoreArgs()
+        : root_path(),
+          host(),
+          port(0),
+          device_id(),
+          pairing_code(),
+          device_name(),
+          destination_root() {}
 };
 
 struct ExportBackupArgs {
@@ -74,6 +84,7 @@ struct ParsedArgs {
 };
 
 bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string* error_message);
+std::string build_compile_time();
 std::string build_help_text();
 
 }  // namespace STManagerCli

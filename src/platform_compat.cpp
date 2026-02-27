@@ -3,7 +3,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <Windows.h>
+#include <windows.h>
 
 #include <direct.h>
 #include <io.h>
@@ -174,6 +174,64 @@ std::string socket_last_error_message() {
     return message;
 #else
     return std::strerror(errno);
+#endif
+}
+
+Status local_path_to_utf16(const std::string& local_path, std::wstring* utf16_out) {
+    if (utf16_out == NULL) {
+        return Status(StatusCode::kSyncProtocolError, "utf16 output cannot be null");
+    }
+
+    utf16_out->clear();
+
+#ifdef _WIN32
+    if (local_path.empty()) {
+        return Status::ok_status();
+    }
+
+    const int wide_char_length = MultiByteToWideChar(
+        CP_ACP,
+        0,
+        local_path.c_str(),
+        -1,
+        NULL,
+        0);
+    if (wide_char_length <= 0) {
+        std::ostringstream message_stream;
+        message_stream << "MultiByteToWideChar size query failed: "
+                       << static_cast<unsigned long>(GetLastError());
+        return Status(StatusCode::kIoError, message_stream.str());
+    }
+
+    std::wstring wide_path(static_cast<size_t>(wide_char_length), L'\0');
+    const int convert_result = MultiByteToWideChar(
+        CP_ACP,
+        0,
+        local_path.c_str(),
+        -1,
+        &wide_path[0],
+        wide_char_length);
+    if (convert_result <= 0) {
+        std::ostringstream message_stream;
+        message_stream << "MultiByteToWideChar conversion failed: "
+                       << static_cast<unsigned long>(GetLastError());
+        return Status(StatusCode::kIoError, message_stream.str());
+    }
+
+    if (!wide_path.empty() && wide_path[wide_path.size() - 1] == L'\0') {
+        wide_path.resize(wide_path.size() - 1);
+    }
+
+    *utf16_out = wide_path;
+    return Status::ok_status();
+#else
+    std::wstring wide_path;
+    wide_path.reserve(local_path.size());
+    for (std::string::const_iterator it = local_path.begin(); it != local_path.end(); ++it) {
+        wide_path.push_back(static_cast<wchar_t>(static_cast<unsigned char>(*it)));
+    }
+    *utf16_out = wide_path;
+    return Status::ok_status();
 #endif
 }
 

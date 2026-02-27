@@ -33,19 +33,27 @@ Status parse_common_response(
 
 }  // namespace
 
-std::string build_pair_request_message(const std::string& local_device_id, const PairingOptions& options) {
+std::string build_pair_request_message(
+    const std::string& local_device_id,
+    const std::string& local_device_name,
+    const PairingOptions& options) {
     nlohmann::json request_json;
     request_json["type"] = "pair_request";
     request_json["device_id"] = local_device_id;
+    request_json["device_name"] = local_device_name;
     request_json["pairing_code"] = options.pairing_code;
     request_json["remember_device"] = options.remember_device;
     return request_json.dump();
 }
 
-std::string build_auth_request_message(const std::string& local_device_id, SyncDirection direction) {
+std::string build_auth_request_message(
+    const std::string& local_device_id,
+    const std::string& local_device_name,
+    SyncDirection direction) {
     nlohmann::json request_json;
     request_json["type"] = "auth_request";
     request_json["device_id"] = local_device_id;
+    request_json["device_name"] = local_device_name;
     request_json["direction"] = direction == SyncDirection::kPush ? "push" : "pull";
     return request_json.dump();
 }

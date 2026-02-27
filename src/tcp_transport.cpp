@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <cstring>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -22,6 +23,8 @@
 
 namespace STManager {
 namespace {
+
+const uint32_t kMaxControlMessageBytes = 1024 * 1024;
 
 Status make_io_error(const std::string& prefix) {
     std::ostringstream message_stream;
@@ -120,14 +123,31 @@ Status send_framed_string(int socket_fd, const std::string& message) {
 }
 
 Status receive_framed_string(int socket_fd, std::string* message) {
+    if (message == NULL) {
+        return Status(StatusCode::kSyncProtocolError, "message output cannot be null");
+    }
+
     uint32_t message_size = 0;
     const Status read_length_status = read_u32(socket_fd, &message_size);
     if (!read_length_status.ok()) {
         return read_length_status;
     }
+    if (message_size > kMaxControlMessageBytes) {
+        return Status(StatusCode::kSyncProtocolError, "Control message too large");
+    }
 
     std::string buffer;
-    buffer.resize(message_size);
+    try {
+        buffer.resize(message_size);
+    } catch (const std::exception& exception) {
+        return Status(
+            StatusCode::kIoError,
+            std::string("stage=client.protocol.receive_framed_string.resize; ") + exception.what());
+    } catch (...) {
+        return Status(
+            StatusCode::kIoError,
+            "stage=client.protocol.receive_framed_string.resize; unknown exception");
+    }
     if (message_size == 0) {
         *message = buffer;
         return Status::ok_status();
@@ -200,7 +220,17 @@ Status receive_framed_stream(int socket_fd, std::ostream& out) {
             return read_status;
         }
 
-        out.write(buffer, static_cast<std::streamsize>(chunk_size));
+        try {
+            out.write(buffer, static_cast<std::streamsize>(chunk_size));
+        } catch (const std::exception& exception) {
+            return Status(
+                StatusCode::kIoError,
+                std::string("stage=client.protocol.receive_framed_stream.write; ") + exception.what());
+        } catch (...) {
+            return Status(
+                StatusCode::kIoError,
+                "stage=client.protocol.receive_framed_stream.write; unknown exception");
+        }
         if (!out) {
             return Status(StatusCode::kIoError, "Failed writing received stream data");
         }

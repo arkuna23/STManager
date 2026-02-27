@@ -13,6 +13,13 @@
 #include <memory>
 #include <thread>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
 using STManager::DataManager;
 using STManager::ExportBackupOptions;
 using STManager::JsonTrustedDeviceStore;
@@ -51,6 +58,19 @@ struct TestContext {
             ++(ctx).failed_assertions;                                                               \
         }                                                                                            \
     } while (0)
+
+bool is_wildcard_host(const std::string& host) {
+    return host.empty() || host == "0.0.0.0" || host == "::" || host == "[::]";
+}
+
+bool can_create_tcp_socket() {
+    const int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (socket_fd < 0) {
+        return false;
+    }
+    STManager::internal::close_socket_fd(socket_fd);
+    return true;
+}
 
 bool test_tcp_transport_rejects_invalid_connect_args() {
     TestContext context;
@@ -222,18 +242,17 @@ bool test_manager_serve_sync_returns_stoppable_handle() {
     EXPECT_TRUE(context, task_handle.get() != NULL);
 
     for (int attempt = 0; attempt < 50 && task_handle->is_running(); ++attempt) {
-        const STManager::SyncTaskInfo task_info = task_handle->info();
-        if (task_info.local_port > 0) {
+        const STManager::DeviceInfo task_info = task_handle->info();
+        if (task_info.port > 0) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
-    const STManager::SyncTaskInfo task_info = task_handle->info();
+    const STManager::DeviceInfo task_info = task_handle->info();
     EXPECT_TRUE(context, !task_info.device_id.empty());
-    EXPECT_TRUE(
-        context,
-        static_cast<int>(task_info.mode) == static_cast<int>(STManager::SyncTaskMode::kServe));
+    EXPECT_TRUE(context, !task_info.device_name.empty());
+    EXPECT_TRUE(context, task_handle->mode() == STManager::SyncTaskMode::kServe);
 
     task_handle->stop();
     const Status wait_status = task_handle->wait();
@@ -245,6 +264,96 @@ bool test_manager_serve_sync_returns_stoppable_handle() {
     EXPECT_TRUE(
         context,
         static_cast<int>(task_handle->state()) == static_cast<int>(STManager::SyncTaskState::kFinished));
+
+    STManagerTest::remove_directory_recursive(root_path);
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_serve_sync_info_uses_option_device_name() {
+    TestContext context;
+
+    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-serve-device-name");
+    EXPECT_TRUE(context, !root_path.empty());
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root_path, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    ServeSyncOptions options;
+    options.server_options.bind_host = "127.0.0.1";
+    options.server_options.advertise = false;
+    options.server_options.port = 0;
+    options.device_name = "ServeCustomDevice";
+
+    std::unique_ptr<STManager::SyncTaskHandle> task_handle = manager.serve_sync(options);
+    EXPECT_TRUE(context, task_handle.get() != NULL);
+
+    for (int attempt = 0; attempt < 50 && task_handle->is_running(); ++attempt) {
+        const STManager::DeviceInfo task_info = task_handle->info();
+        if (task_info.port > 0) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    const STManager::DeviceInfo task_info = task_handle->info();
+    EXPECT_EQ(context, task_info.device_name, std::string("ServeCustomDevice"));
+
+    task_handle->stop();
+    const Status wait_status = task_handle->wait();
+    EXPECT_TRUE(
+        context,
+        wait_status.ok() ||
+            static_cast<int>(wait_status.code) == static_cast<int>(StatusCode::kSyncProtocolError) ||
+            static_cast<int>(wait_status.code) == static_cast<int>(StatusCode::kIoError));
+
+    STManagerTest::remove_directory_recursive(root_path);
+    return context.failed_assertions == 0;
+}
+
+bool test_manager_serve_sync_replaces_wildcard_bound_host() {
+    TestContext context;
+
+    const std::string root_path = STManagerTest::create_sillytavern_fixture("manager-serve-wildcard-host");
+    EXPECT_TRUE(context, !root_path.empty());
+
+    if (!can_create_tcp_socket()) {
+        std::cout << "[SKIP] manager_serve_sync_replaces_wildcard_bound_host (socket unavailable)\n";
+        STManagerTest::remove_directory_recursive(root_path);
+        return true;
+    }
+
+    Manager manager;
+    const Status create_status = Manager::create_from_root(root_path, &manager);
+    EXPECT_TRUE(context, create_status.ok());
+
+    ServeSyncOptions options;
+    options.server_options.bind_host = "0.0.0.0";
+    options.server_options.advertise = false;
+    options.server_options.port = 0;
+
+    std::unique_ptr<STManager::SyncTaskHandle> task_handle = manager.serve_sync(options);
+    EXPECT_TRUE(context, task_handle.get() != NULL);
+
+    for (int attempt = 0; attempt < 75 && task_handle->is_running(); ++attempt) {
+        const STManager::DeviceInfo task_info = task_handle->info();
+        if (task_info.port > 0 && !is_wildcard_host(task_info.host)) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    const STManager::DeviceInfo task_info = task_handle->info();
+    EXPECT_TRUE(context, task_info.port > 0 || !task_handle->is_running());
+    EXPECT_TRUE(context, !is_wildcard_host(task_info.host));
+
+    task_handle->stop();
+    const Status wait_status = task_handle->wait();
+    EXPECT_TRUE(
+        context,
+        wait_status.ok() ||
+            static_cast<int>(wait_status.code) == static_cast<int>(StatusCode::kSyncProtocolError) ||
+            static_cast<int>(wait_status.code) == static_cast<int>(StatusCode::kIoError));
 
     STManagerTest::remove_directory_recursive(root_path);
     return context.failed_assertions == 0;
@@ -314,6 +423,8 @@ int main() {
         {"serve_sync_server_rejects_null_bound_port", test_serve_sync_server_rejects_null_bound_port},
         {"manager_create_from_root_rejects_invalid_root", test_manager_create_from_root_rejects_invalid_root},
         {"manager_serve_sync_returns_stoppable_handle", test_manager_serve_sync_returns_stoppable_handle},
+        {"manager_serve_sync_info_uses_option_device_name", test_manager_serve_sync_info_uses_option_device_name},
+        {"manager_serve_sync_replaces_wildcard_bound_host", test_manager_serve_sync_replaces_wildcard_bound_host},
         {"manager_export_backup_rejects_null_result", test_manager_export_backup_rejects_null_result},
         {"manager_restore_backup_rejects_empty_file_path", test_manager_restore_backup_rejects_empty_file_path},
     };

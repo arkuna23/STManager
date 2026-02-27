@@ -23,6 +23,7 @@ bool mode_is_symlink(mode_t mode);
 
 bool socket_error_is_interrupt();
 std::string socket_last_error_message();
+Status local_path_to_utf16(const std::string& local_path, std::wstring* utf16_out);
 
 }  // namespace internal
 }  // namespace STManager

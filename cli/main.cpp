@@ -19,21 +19,6 @@ void print_status_error(const STManager::Status& status) {
     std::cerr << "Error: " << status.message << "\n";
 }
 
-void print_ignored_extensions(const std::vector<std::string>& ignored_extensions) {
-    std::cout << "Ignored extensions for this restore";
-    if (ignored_extensions.empty()) {
-        std::cout << ": (none)\n";
-        return;
-    }
-
-    std::cout << ":\n";
-    for (std::vector<std::string>::const_iterator it = ignored_extensions.begin();
-         it != ignored_extensions.end();
-         ++it) {
-        std::cout << "  - " << *it << "\n";
-    }
-}
-
 std::atomic<bool> g_interrupt_requested(false);
 
 void handle_sigint(int) {
@@ -212,6 +197,7 @@ int serve_backup_command(const STManagerCli::ServeBackupArgs& args) {
     serve_sync_options.server_options.port = args.port;
     serve_sync_options.server_options.pairing_code = args.pairing_code;
     serve_sync_options.server_options.advertise = args.advertise;
+    serve_sync_options.device_name = args.device_name;
 
     std::cout << "Starting sync server on " << serve_sync_options.server_options.bind_host
               << ":" << serve_sync_options.server_options.port
@@ -225,12 +211,12 @@ int serve_backup_command(const STManagerCli::ServeBackupArgs& args) {
 
     SignalScope signal_scope;
     bool printed_runtime_info = false;
-    STManager::SyncTaskInfo latest_info = serve_handle->info();
+    STManager::DeviceInfo latest_info = serve_handle->info();
     while (serve_handle->is_running()) {
         latest_info = serve_handle->info();
-        if (!printed_runtime_info && latest_info.local_port > 0) {
-            std::cout << "Server running on " << latest_info.local_ip
-                      << ":" << latest_info.local_port
+        if (!printed_runtime_info && latest_info.port > 0) {
+            std::cout << "Server running on " << latest_info.host
+                      << ":" << latest_info.port
                       << " (device_id=" << latest_info.device_id << ")\n";
             printed_runtime_info = true;
         }
@@ -252,8 +238,9 @@ int serve_backup_command(const STManagerCli::ServeBackupArgs& args) {
     std::cout << "Server stopped.\n";
     std::cout << "Root: " << root_path << "\n";
     std::cout << "Device ID: " << latest_info.device_id << "\n";
-    std::cout << "Bound host: " << latest_info.local_ip << "\n";
-    std::cout << "Bound port: " << latest_info.local_port << "\n";
+    std::cout << "Device name: " << latest_info.device_name << "\n";
+    std::cout << "Bound host: " << latest_info.host << "\n";
+    std::cout << "Bound port: " << latest_info.port << "\n";
     return 0;
 }
 
@@ -281,6 +268,7 @@ int pair_restore_command(const STManagerCli::PairRestoreArgs& args) {
     STManager::PairSyncOptions pair_sync_options;
     pair_sync_options.pairing_options.pairing_code = args.pairing_code;
     pair_sync_options.pairing_options.remember_device = true;
+    pair_sync_options.device_name = args.device_name;
     pair_sync_options.sync_options.destination_root_override = args.destination_root;
 
     STManager::PairSyncResult pair_sync_result;
@@ -289,14 +277,10 @@ int pair_restore_command(const STManagerCli::PairRestoreArgs& args) {
         pair_sync_options,
         &pair_sync_result);
     if (!pair_sync_status.ok()) {
-        std::cout << "Using default ignored extensions from built-in defaults.\n";
-        print_ignored_extensions(pair_sync_result.effective_ignored_extensions);
         print_status_error(pair_sync_status);
         return 1;
     }
 
-    std::cout << "Using default ignored extensions from built-in defaults.\n";
-    print_ignored_extensions(pair_sync_result.effective_ignored_extensions);
     std::cout << "Restore completed from device " << pair_sync_result.selected_device.device_id
               << ".\n";
     return 0;
@@ -367,9 +351,12 @@ int main(int argc, char** argv) {
     STManagerCli::ParsedArgs parsed_args;
     std::string parse_error;
     if (!parse_or_select_cli_args(argc, argv, &parsed_args, &parse_error)) {
+        std::cerr << "Build time: " << STManagerCli::build_compile_time() << "\n";
         std::cerr << "Error: " << parse_error << "\n\n" << STManagerCli::build_help_text() << "\n";
         return 1;
     }
+
+    std::cout << "Build time: " << STManagerCli::build_compile_time() << "\n";
 
     if (parsed_args.command_type == STManagerCli::CommandType::kServeBackup) {
         return serve_backup_command(parsed_args.serve_backup_args);

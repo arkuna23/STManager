@@ -1,4 +1,5 @@
 #include "locate.h"
+#include "path_safety.h"
 
 #include <sys/stat.h>
 
@@ -33,10 +34,21 @@ Status locate_silly_tavern_paths(const std::string& root_path, std::string* reso
                       "SillyTavern root does not exist or is not a directory");
     }
 
-    const std::string candidate_extensions_path = join_path(root_path, "public/scripts/extensions");
-    if (!is_directory(candidate_extensions_path)) {
+    const std::string extensions_root_path = join_path(root_path, "public/scripts/extensions");
+    if (!is_directory(extensions_root_path)) {
         return Status(StatusCode::kMissingExtensionsDir,
                       "Missing required directory: public/scripts/extensions");
+    }
+
+    const std::string candidate_extensions_path = join_path(extensions_root_path, "third-party");
+    if (!is_directory(candidate_extensions_path)) {
+        const Status create_status = ensure_directory_tree(candidate_extensions_path, 0755);
+        if (!create_status.ok()) {
+            return Status(
+                StatusCode::kMissingExtensionsDir,
+                "Missing required directory: public/scripts/extensions/third-party; auto-create failed: " +
+                    create_status.message);
+        }
     }
 
     const std::string candidate_data_path = join_path(root_path, "data");

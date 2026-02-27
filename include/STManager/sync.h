@@ -28,9 +28,8 @@ struct DeviceInfo {
 struct SyncOptions {
     BackupOptions backup_options;
     std::string destination_root_override;
-    std::vector<std::string> ignored_extension_names;
 
-    SyncOptions() : backup_options(), destination_root_override(), ignored_extension_names() {}
+    SyncOptions() : backup_options(), destination_root_override() {}
 };
 
 struct PairingOptions {
@@ -89,6 +88,7 @@ public:
 class STMANAGER_EXPORT SyncManager {
 public:
     SyncManager(const DataManager& data_manager, const std::string& local_device_id,
+                const std::string& local_device_name,
                 ISyncTransport* transport, IDeviceDiscovery* discovery,
                 ITrustedDeviceStore* trusted_store);
 
@@ -104,6 +104,7 @@ public:
 private:
     const DataManager& data_manager_;
     std::string local_device_id_;
+    std::string local_device_name_;
     ISyncTransport* transport_;
     IDeviceDiscovery* discovery_;
     ITrustedDeviceStore* trusted_store_;

@@ -258,7 +258,7 @@ std::string create_sillytavern_fixture(const std::string& case_name) {
         }
     }
 
-    if (!create_directories(join_path(fixture_root, "public/scripts/extensions"))) {
+    if (!create_directories(join_path(fixture_root, "public/scripts/extensions/third-party"))) {
         remove_directory_recursive(fixture_root);
         return std::string();
     }

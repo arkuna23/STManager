@@ -116,6 +116,50 @@ bool test_parse_pair_restore_allows_missing_device_id() {
     return context.failed_assertions == 0;
 }
 
+bool test_parse_serve_backup_device_name() {
+    TestContext context;
+
+    char command_0[] = "stmanager";
+    char command_1[] = "serve";
+    char command_2[] = "backup";
+    char command_3[] = "--device-name";
+    char command_4[] = "MyDevice";
+    char* argv[] = {command_0, command_1, command_2, command_3, command_4};
+
+    STManagerCli::ParsedArgs parsed_args;
+    std::string error_message;
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(5, argv, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kServeBackup));
+    EXPECT_EQ(context, parsed_args.serve_backup_args.device_name, std::string("MyDevice"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_parse_pair_restore_device_name() {
+    TestContext context;
+
+    char command_0[] = "stmanager";
+    char command_1[] = "pair";
+    char command_2[] = "restore";
+    char command_3[] = "--device-name";
+    char command_4[] = "MyDevice";
+    char* argv[] = {command_0, command_1, command_2, command_3, command_4};
+
+    STManagerCli::ParsedArgs parsed_args;
+    std::string error_message;
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(5, argv, &parsed_args, &error_message));
+    EXPECT_EQ(
+        context,
+        static_cast<int>(parsed_args.command_type),
+        static_cast<int>(STManagerCli::CommandType::kPairRestore));
+    EXPECT_EQ(context, parsed_args.pair_restore_args.device_name, std::string("MyDevice"));
+
+    return context.failed_assertions == 0;
+}
+
 bool test_parse_export_backup_defaults() {
     TestContext context;
 
@@ -199,6 +243,17 @@ bool test_parse_help_options() {
     return context.failed_assertions == 0;
 }
 
+bool test_help_text_mentions_device_name_options() {
+    TestContext context;
+
+    const std::string help_text = STManagerCli::build_help_text();
+    EXPECT_TRUE(context, help_text.find("serve backup") != std::string::npos);
+    EXPECT_TRUE(context, help_text.find("pair restore") != std::string::npos);
+    EXPECT_TRUE(context, help_text.find("--device-name <name>") != std::string::npos);
+
+    return context.failed_assertions == 0;
+}
+
 bool test_parse_serve_without_action_fails() {
     TestContext context;
 
@@ -223,7 +278,7 @@ bool test_detect_sillytavern_root_from_parent() {
 
     const std::string nested_path = STManagerTest::join_path(
         fixture_root,
-        "public/scripts/extensions");
+        "public/scripts/extensions/third-party");
     EXPECT_TRUE(context, chdir(nested_path.c_str()) == 0);
 
     std::string resolved_root;
@@ -493,9 +548,12 @@ int main() {
     const TestCase test_cases[] = {
         {"parse_serve_backup_defaults", test_parse_serve_backup_defaults},
         {"parse_pair_restore_allows_missing_device_id", test_parse_pair_restore_allows_missing_device_id},
+        {"parse_serve_backup_device_name", test_parse_serve_backup_device_name},
+        {"parse_pair_restore_device_name", test_parse_pair_restore_device_name},
         {"parse_export_backup_defaults", test_parse_export_backup_defaults},
         {"parse_restore_backup_defaults", test_parse_restore_backup_defaults},
         {"parse_help_options", test_parse_help_options},
+        {"help_text_mentions_device_name_options", test_help_text_mentions_device_name_options},
         {"parse_serve_without_action_fails", test_parse_serve_without_action_fails},
         {"detect_sillytavern_root_from_parent", test_detect_sillytavern_root_from_parent},
         {"manager_create_from_root_creates_device_id", test_manager_create_from_root_creates_device_id},

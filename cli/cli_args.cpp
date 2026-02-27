@@ -72,6 +72,10 @@ bool parse_serve_backup_args(
             args.pairing_code = argv[++index];
             continue;
         }
+        if (flag == "--device-name" && index + 1 < argc) {
+            args.device_name = argv[++index];
+            continue;
+        }
         if (flag == "--advertise" && index + 1 < argc) {
             if (!parse_bool_value(argv[++index], &args.advertise)) {
                 *error_message = "Invalid --advertise value. Use true or false";
@@ -123,6 +127,10 @@ bool parse_pair_restore_args(
         }
         if (flag == "--pairing-code" && index + 1 < argc) {
             args.pairing_code = argv[++index];
+            continue;
+        }
+        if (flag == "--device-name" && index + 1 < argc) {
+            args.device_name = argv[++index];
             continue;
         }
         if (flag == "--dest-root" && index + 1 < argc) {
@@ -268,15 +276,24 @@ bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string*
     return false;
 }
 
+std::string build_compile_time() {
+#if defined(__DATE__) && defined(__TIME__)
+    return std::string(__DATE__) + " " + std::string(__TIME__);
+#else
+    return "unknown";
+#endif
+}
+
 std::string build_help_text() {
     std::ostringstream out;
     out << "STManager CLI\n\n";
     out << "  stmanager --help | -h\n\n";
     out << "Commands:\n";
     out << "  stmanager serve backup [--root <path>] [--bind <host>] [--port <port>] "
-           "[--pairing-code <code>] [--advertise true|false]\n";
+           "[--pairing-code <code>] [--device-name <name>] [--advertise true|false]\n";
     out << "  stmanager pair restore [--root <path>] [--host <ip>] [--port <port>] "
-           "[--device-id <id>] [--pairing-code <code>] [--dest-root <path>]\n";
+           "[--device-id <id>] [--pairing-code <code>] [--device-name <name>] "
+           "[--dest-root <path>]\n";
     out << "  stmanager export backup [--root <path>] [--file <path>] [--git-mode]\n";
     out << "  stmanager restore backup [--root <path>] [--file <path>]\n";
     out << "\nDefaults:\n";

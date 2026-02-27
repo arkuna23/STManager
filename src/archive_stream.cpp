@@ -16,6 +16,8 @@
 #include <cerrno>
 #include <cstring>
 #include <ctime>
+#include <cstdlib>
+#include <exception>
 #include <istream>
 #include <set>
 #include <sstream>
@@ -33,6 +35,7 @@ namespace {
 
 const char* kGitManifestPath = ".stmanager/extensions_git_manifest.json";
 const size_t kStreamBufferSize = 64 * 1024;
+const size_t kMaxTempPathCandidateLength = 1024;
 
 std::string join_path(const std::string& lhs, const std::string& rhs) {
     if (lhs.empty()) {
@@ -42,6 +45,21 @@ std::string join_path(const std::string& lhs, const std::string& rhs) {
         return lhs + rhs;
     }
     return lhs + "/" + rhs;
+}
+
+std::string parent_path(const std::string& path) {
+    if (path.empty()) {
+        return std::string();
+    }
+
+    const std::string::size_type separator_index = path.find_last_of("/\\");
+    if (separator_index == std::string::npos) {
+        return std::string();
+    }
+    if (separator_index == 0) {
+        return path.substr(0, 1);
+    }
+    return path.substr(0, separator_index);
 }
 
 bool is_regular_file(mode_t mode) {
@@ -56,37 +74,118 @@ bool is_symlink(mode_t mode) {
     return mode_is_symlink(mode);
 }
 
-bool is_safe_extension_name(const std::string& extension_name) {
-    if (extension_name.empty() || extension_name == "." || extension_name == "..") {
-        return false;
-    }
-    if (extension_name.find('/') != std::string::npos ||
-        extension_name.find('\\') != std::string::npos) {
-        return false;
-    }
-    return true;
-}
-
 Status make_io_error(const std::string& action, const std::string& path) {
     std::ostringstream message;
     message << action << " failed for path " << path << ": " << std::strerror(errno);
     return Status(StatusCode::kIoError, message.str());
 }
 
-Status create_temp_archive_file_path(std::string* path) {
+void append_temp_directory_candidate(
+    std::vector<std::string>* candidate_directories,
+    const char* value) {
+    if (candidate_directories == NULL || value == NULL || value[0] == '\0') {
+        return;
+    }
+
+    try {
+        const std::string candidate = value;
+        if (candidate.size() > kMaxTempPathCandidateLength) {
+            return;
+        }
+
+        for (std::vector<std::string>::const_iterator it = candidate_directories->begin();
+             it != candidate_directories->end();
+             ++it) {
+            if (*it == candidate) {
+                return;
+            }
+        }
+
+        candidate_directories->push_back(candidate);
+    } catch (...) {
+        return;
+    }
+}
+
+void append_temp_directory_candidate(
+    std::vector<std::string>* candidate_directories,
+    const std::string& value) {
+    if (value.empty()) {
+        return;
+    }
+    append_temp_directory_candidate(candidate_directories, value.c_str());
+}
+
+Status create_temp_archive_file_path(const std::string& preferred_temp_directory, std::string* path) {
     if (path == NULL) {
         return Status(StatusCode::kIoError, "Temporary archive path output cannot be null");
     }
 
-    char path_template[] = "/tmp/stmanager-backup-XXXXXX";
-    const int temp_fd = mkstemp(path_template);
-    if (temp_fd < 0) {
-        return Status(StatusCode::kIoError, "Failed to create temporary backup file");
+    std::vector<std::string> candidate_directories;
+    append_temp_directory_candidate(&candidate_directories, preferred_temp_directory);
+    append_temp_directory_candidate(&candidate_directories, std::getenv("TMPDIR"));
+    append_temp_directory_candidate(&candidate_directories, std::getenv("TEMP"));
+    append_temp_directory_candidate(&candidate_directories, std::getenv("TMP"));
+
+#ifdef P_tmpdir
+    append_temp_directory_candidate(&candidate_directories, P_tmpdir);
+#endif
+
+#ifndef _WIN32
+    append_temp_directory_candidate(&candidate_directories, "/tmp");
+#endif
+    append_temp_directory_candidate(&candidate_directories, ".");
+
+    std::vector<std::string> failure_details;
+    for (std::vector<std::string>::const_iterator it = candidate_directories.begin();
+         it != candidate_directories.end();
+         ++it) {
+        if (it->size() > kMaxTempPathCandidateLength) {
+            failure_details.push_back(*it + " -> skipped (candidate path is too long)");
+            continue;
+        }
+
+        if (*it != ".") {
+            const Status ensure_status = ensure_directory_tree(*it, 0755);
+            if (!ensure_status.ok()) {
+                failure_details.push_back(*it + " -> " + ensure_status.message);
+                continue;
+            }
+        }
+
+        const std::string file_template = join_path(*it, "stmanager-backup-XXXXXX");
+        std::vector<char> template_buffer(file_template.begin(), file_template.end());
+        template_buffer.push_back('\0');
+
+        const int temp_fd = mkstemp(template_buffer.data());
+        if (temp_fd < 0) {
+            const int error_code = errno;
+            std::ostringstream detail_stream;
+            detail_stream << file_template << " -> " << std::strerror(error_code)
+                          << " (" << error_code << ")";
+            failure_details.push_back(detail_stream.str());
+            continue;
+        }
+
+        close_file_fd(temp_fd);
+        *path = template_buffer.data();
+        return Status::ok_status();
     }
 
-    close_file_fd(temp_fd);
-    *path = path_template;
-    return Status::ok_status();
+    std::ostringstream error_stream;
+    error_stream << "stage=archive.backup.temp_file.create; "
+                 << "Failed to create temporary backup file in any candidate temp directory";
+    if (!failure_details.empty()) {
+        error_stream << ". Attempts: ";
+        for (size_t index = 0; index < failure_details.size(); ++index) {
+            if (index > 0) {
+                error_stream << "; ";
+            }
+            error_stream << failure_details[index];
+        }
+    }
+
+    return Status(StatusCode::kIoError, error_stream.str());
 }
 
 Status copy_file_to_output_stream(const std::string& file_path, std::ostream& out) {
@@ -125,7 +224,17 @@ Status write_entry_header(struct archive* archive_writer, const std::string& arc
         return Status(StatusCode::kArchiveError, "Failed to create archive entry");
     }
 
+#ifdef _WIN32
+    std::wstring archive_path_utf16;
+    const Status path_status = local_path_to_utf16(archive_path, &archive_path_utf16);
+    if (!path_status.ok()) {
+        archive_entry_free(archive_entry);
+        return path_status;
+    }
+    archive_entry_copy_pathname_w(archive_entry, archive_path_utf16.c_str());
+#else
     archive_entry_set_pathname(archive_entry, archive_path.c_str());
+#endif
     archive_entry_set_perm(archive_entry, source_stat.st_mode & 0777);
     archive_entry_set_mtime(archive_entry, source_stat.st_mtime, 0);
 
@@ -174,8 +283,19 @@ Status read_stream_to_memory(std::istream& in, std::string* output) {
 
     std::string data;
     std::vector<char> buffer(kStreamBufferSize);
-    while (in.read(buffer.data(), static_cast<std::streamsize>(buffer.size())) || in.gcount() > 0) {
-        data.append(buffer.data(), static_cast<std::string::size_type>(in.gcount()));
+    try {
+        while (in.read(buffer.data(), static_cast<std::streamsize>(buffer.size())) ||
+               in.gcount() > 0) {
+            data.append(buffer.data(), static_cast<std::string::size_type>(in.gcount()));
+        }
+    } catch (const std::exception& exception) {
+        return Status(
+            StatusCode::kIoError,
+            std::string("stage=archive.stream.read_to_memory; ") + exception.what());
+    } catch (...) {
+        return Status(
+            StatusCode::kIoError,
+            "stage=archive.stream.read_to_memory; unknown exception");
     }
 
     if (!in.eof() && in.fail()) {
@@ -414,77 +534,7 @@ Status resolve_restore_target_paths(const std::string& destination_root,
     }
 
     target_paths->data_path = join_path(destination_root, "data");
-    target_paths->extensions_path = join_path(destination_root, "public/scripts/extensions");
-    return Status::ok_status();
-}
-
-Status resolve_ignored_extension_names(
-    const RestoreOptions& options,
-    std::set<std::string>* ignored_extension_names) {
-    if (ignored_extension_names == NULL) {
-        return Status(StatusCode::kSyncProtocolError, "ignored extension names output cannot be null");
-    }
-
-    ignored_extension_names->clear();
-    for (std::vector<std::string>::const_iterator it = options.ignored_extension_names.begin();
-         it != options.ignored_extension_names.end();
-         ++it) {
-        if (!is_safe_extension_name(*it)) {
-            return Status(StatusCode::kSyncProtocolError, "Invalid ignored extension name: " + *it);
-        }
-        ignored_extension_names->insert(*it);
-    }
-
-    return Status::ok_status();
-}
-
-Status remove_ignored_extensions_from_staged_directory(
-    const std::string& staged_extensions_path,
-    const std::set<std::string>& ignored_extension_names) {
-    for (std::set<std::string>::const_iterator it = ignored_extension_names.begin();
-         it != ignored_extension_names.end();
-         ++it) {
-        const std::string staged_extension_path = join_path(staged_extensions_path, *it);
-        if (!path_exists(staged_extension_path)) {
-            continue;
-        }
-
-        const Status remove_status = remove_path_recursive(staged_extension_path);
-        if (!remove_status.ok()) {
-            return remove_status;
-        }
-    }
-
-    return Status::ok_status();
-}
-
-Status restore_ignored_extensions_from_backup(
-    const std::string& backup_extensions_path,
-    const std::string& target_extensions_path,
-    const std::set<std::string>& ignored_extension_names) {
-    for (std::set<std::string>::const_iterator it = ignored_extension_names.begin();
-         it != ignored_extension_names.end();
-         ++it) {
-        const std::string backup_extension_path = join_path(backup_extensions_path, *it);
-        if (!path_exists(backup_extension_path)) {
-            continue;
-        }
-
-        const std::string target_extension_path = join_path(target_extensions_path, *it);
-        if (path_exists(target_extension_path)) {
-            const Status remove_status = remove_path_recursive(target_extension_path);
-            if (!remove_status.ok()) {
-                return remove_status;
-            }
-        }
-
-        const Status restore_status =
-            copy_path_recursive(backup_extension_path, target_extension_path);
-        if (!restore_status.ok()) {
-            return restore_status;
-        }
-    }
-
+    target_paths->extensions_path = join_path(destination_root, "public/scripts/extensions/third-party");
     return Status::ok_status();
 }
 
@@ -598,8 +648,7 @@ Status restore_git_manifest(const std::string& stage_root, const std::string& de
 
 Status restore_from_staging_directory(
     const std::string& stage_root,
-    const std::string& destination_root,
-    const RestoreOptions& options) {
+    const std::string& destination_root) {
     const std::string staged_data_path = join_path(stage_root, "data");
     if (!path_is_directory(staged_data_path)) {
         return Status(StatusCode::kInvalidArchiveEntry,
@@ -623,12 +672,6 @@ Status restore_from_staging_directory(
         join_path(stage_root, ".stmanager-restore-old-extensions");
     const bool had_existing_data = path_exists(target_paths.data_path);
     const bool had_existing_extensions = path_exists(target_paths.extensions_path);
-    std::set<std::string> ignored_extension_names;
-    const Status ignored_names_status =
-        resolve_ignored_extension_names(options, &ignored_extension_names);
-    if (!ignored_names_status.ok()) {
-        return ignored_names_status;
-    }
 
     if (had_existing_data) {
         const Status backup_data_status =
@@ -673,21 +716,6 @@ Status restore_from_staging_directory(
     }
     installed_data = true;
 
-    const Status remove_ignored_from_staged_status =
-        remove_ignored_extensions_from_staged_directory(
-            staged_extensions_path,
-            ignored_extension_names);
-    if (!remove_ignored_from_staged_status.ok()) {
-        const Status rollback_status = rollback_restore_targets(
-            target_paths, backup_data_path, backup_extensions_path, had_existing_data,
-            had_existing_extensions, installed_data, installed_extensions);
-        if (!rollback_status.ok()) {
-            return Status(StatusCode::kIoError, remove_ignored_from_staged_status.message +
-                                                    "; rollback failed: " + rollback_status.message);
-        }
-        return remove_ignored_from_staged_status;
-    }
-
     const Status install_extensions_status =
         move_or_copy_path(staged_extensions_path, target_paths.extensions_path);
     if (!install_extensions_status.ok()) {
@@ -703,26 +731,6 @@ Status restore_from_staging_directory(
         return install_extensions_status;
     }
     installed_extensions = true;
-
-    if (had_existing_extensions && !ignored_extension_names.empty()) {
-        const Status restore_ignored_extensions_status =
-            restore_ignored_extensions_from_backup(
-                backup_extensions_path,
-                target_paths.extensions_path,
-                ignored_extension_names);
-        if (!restore_ignored_extensions_status.ok()) {
-            const Status rollback_status = rollback_restore_targets(
-                target_paths, backup_data_path, backup_extensions_path, had_existing_data,
-                had_existing_extensions, installed_data, installed_extensions);
-            if (!rollback_status.ok()) {
-                return Status(
-                    StatusCode::kIoError,
-                    restore_ignored_extensions_status.message +
-                        "; rollback failed: " + rollback_status.message);
-            }
-            return restore_ignored_extensions_status;
-        }
-    }
 
     const Status manifest_status = restore_git_manifest(stage_root, destination_root);
     if (!manifest_status.ok()) {
@@ -750,6 +758,13 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
     }
 
     archive_write_set_format_pax_restricted(archive_writer);
+    if (archive_write_set_options(archive_writer, "hdrcharset=BINARY") != ARCHIVE_OK) {
+        const std::string archive_error = archive_error_string(archive_writer);
+        archive_write_free(archive_writer);
+        return Status(
+            StatusCode::kArchiveError,
+            "Failed to configure archive writer options: " + archive_error);
+    }
 
     if (archive_write_add_filter_zstd(archive_writer) != ARCHIVE_OK) {
         const std::string archive_error = archive_error_string(archive_writer);
@@ -757,8 +772,15 @@ Status write_backup_archive(const std::string& data_path, const std::string& ext
         return Status(StatusCode::kArchiveError, "Failed to enable zstd filter: " + archive_error);
     }
 
+    const std::string root_path = parent_path(data_path);
+    const std::string preferred_temp_directory =
+        root_path.empty()
+            ? std::string()
+            : join_path(join_path(root_path, ".stmanager"), "tmp");
+
     std::string temp_archive_path;
-    const Status temp_path_status = create_temp_archive_file_path(&temp_archive_path);
+    const Status temp_path_status =
+        create_temp_archive_file_path(preferred_temp_directory, &temp_archive_path);
     if (!temp_path_status.ok()) {
         archive_write_free(archive_writer);
         return temp_path_status;
@@ -968,7 +990,8 @@ Status restore_backup_archive(
 
     archive_read_free(archive_reader);
 
-    const Status restore_status = restore_from_staging_directory(stage_root, destination_root, options);
+    (void)options;
+    const Status restore_status = restore_from_staging_directory(stage_root, destination_root);
     const Status cleanup_status = remove_path_recursive(stage_root);
     if (!restore_status.ok()) {
         return restore_status;

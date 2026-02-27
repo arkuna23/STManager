@@ -5,7 +5,6 @@
 
 #include <iosfwd>
 #include <string>
-#include <vector>
 
 namespace STManager {
 
@@ -42,9 +41,7 @@ struct BackupOptions {
     BackupOptions() : git_mode_for_extensions(false) {}
 };
 
-struct RestoreOptions {
-    std::vector<std::string> ignored_extension_names;
-};
+struct RestoreOptions {};
 
 struct GitExtensionInfo {
     std::string extension_name;

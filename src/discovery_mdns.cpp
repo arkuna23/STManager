@@ -5,6 +5,8 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -14,6 +16,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -27,7 +30,7 @@ namespace internal {
 namespace {
 
 const int kDiscoveryPort = 38592;
-const int kDiscoveryTimeoutMs = 1200;
+const int kDiscoveryTimeoutMs = 2000;
 const int kDiscoverySelectIntervalMs = 150;
 const int kDiscoveryResponderPollMs = 500;
 const char* kDiscoveryProtocol = "stmanager.discovery.v1";
@@ -165,6 +168,99 @@ bool receive_discovery_response(int socket_fd, DeviceInfo* device_info) {
     return parse_discovery_response_message(buffer, fallback_host, device_info);
 }
 
+void append_discovery_target(std::vector<uint32_t>* targets, uint32_t address) {
+    if (targets == NULL) {
+        return;
+    }
+
+    for (std::vector<uint32_t>::const_iterator it = targets->begin(); it != targets->end(); ++it) {
+        if (*it == address) {
+            return;
+        }
+    }
+
+    targets->push_back(address);
+}
+
+void collect_discovery_targets(std::vector<uint32_t>* targets) {
+    if (targets == NULL) {
+        return;
+    }
+
+    targets->clear();
+    append_discovery_target(targets, htonl(INADDR_BROADCAST));
+    append_discovery_target(targets, htonl(INADDR_LOOPBACK));
+
+#ifndef _WIN32
+    struct ifaddrs* interface_list = NULL;
+    if (getifaddrs(&interface_list) != 0 || interface_list == NULL) {
+        return;
+    }
+
+    for (struct ifaddrs* it = interface_list; it != NULL; it = it->ifa_next) {
+        if (it->ifa_addr == NULL || it->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        if ((it->ifa_flags & IFF_UP) == 0) {
+            continue;
+        }
+
+        if ((it->ifa_flags & IFF_LOOPBACK) != 0) {
+            continue;
+        }
+
+        uint32_t target_address = 0;
+        if ((it->ifa_flags & IFF_BROADCAST) != 0 &&
+            it->ifa_broadaddr != NULL &&
+            it->ifa_broadaddr->sa_family == AF_INET) {
+            const struct sockaddr_in* broadcast_addr =
+                reinterpret_cast<const struct sockaddr_in*>(it->ifa_broadaddr);
+            target_address = broadcast_addr->sin_addr.s_addr;
+        } else if (it->ifa_netmask != NULL && it->ifa_netmask->sa_family == AF_INET) {
+            const struct sockaddr_in* interface_addr =
+                reinterpret_cast<const struct sockaddr_in*>(it->ifa_addr);
+            const struct sockaddr_in* netmask_addr =
+                reinterpret_cast<const struct sockaddr_in*>(it->ifa_netmask);
+            target_address = interface_addr->sin_addr.s_addr | ~(netmask_addr->sin_addr.s_addr);
+        }
+
+        if (target_address == 0) {
+            continue;
+        }
+        append_discovery_target(targets, target_address);
+    }
+
+    freeifaddrs(interface_list);
+#endif
+}
+
+int send_discovery_requests(int socket_fd, const std::string& request_message) {
+    std::vector<uint32_t> targets;
+    collect_discovery_targets(&targets);
+
+    int successful_sends = 0;
+    for (std::vector<uint32_t>::const_iterator it = targets.begin(); it != targets.end(); ++it) {
+        struct sockaddr_in target_addr;
+        std::memset(&target_addr, 0, sizeof(target_addr));
+        target_addr.sin_family = AF_INET;
+        target_addr.sin_port = htons(kDiscoveryPort);
+        target_addr.sin_addr.s_addr = static_cast<decltype(target_addr.sin_addr.s_addr)>(*it);
+
+        const ssize_t sent_size = sendto(
+            socket_fd,
+            request_message.data(),
+            request_message.size(),
+            0,
+            reinterpret_cast<const struct sockaddr*>(&target_addr),
+            sizeof(target_addr));
+        if (sent_size >= 0) {
+            ++successful_sends;
+        }
+    }
+
+    return successful_sends;
+}
+
 void discovery_responder_loop(int socket_fd, DeviceInfo local_device) {
     const std::string response_message = build_discovery_response_message(local_device);
 
@@ -258,31 +354,13 @@ Status list_mdns_devices(std::vector<DeviceInfo>* devices) {
 
     const std::string request_message = build_discovery_request_message();
 
-    struct sockaddr_in broadcast_addr;
-    std::memset(&broadcast_addr, 0, sizeof(broadcast_addr));
-    broadcast_addr.sin_family = AF_INET;
-    broadcast_addr.sin_port = htons(kDiscoveryPort);
-    broadcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-    sendto(
-        socket_fd,
-        request_message.data(),
-        request_message.size(),
-        0,
-        reinterpret_cast<const struct sockaddr*>(&broadcast_addr),
-        sizeof(broadcast_addr));
-
-    struct sockaddr_in loopback_addr;
-    std::memset(&loopback_addr, 0, sizeof(loopback_addr));
-    loopback_addr.sin_family = AF_INET;
-    loopback_addr.sin_port = htons(kDiscoveryPort);
-    loopback_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    sendto(
-        socket_fd,
-        request_message.data(),
-        request_message.size(),
-        0,
-        reinterpret_cast<const struct sockaddr*>(&loopback_addr),
-        sizeof(loopback_addr));
+    const int successful_sends = send_discovery_requests(socket_fd, request_message);
+    if (successful_sends == 0) {
+        close_socket_fd(socket_fd);
+        return Status(
+            StatusCode::kDiscoveryError,
+            "Failed to send discovery request on any local interface");
+    }
 
     std::map<std::string, DeviceInfo> by_device_id;
     int elapsed_ms = 0;
