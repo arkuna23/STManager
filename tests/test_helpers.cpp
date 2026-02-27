@@ -5,14 +5,62 @@
 #include <limits.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <vector>
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 namespace STManagerTest {
+
+namespace {
+
+int stat_path(const std::string& path, struct stat* path_stat) {
+#ifdef _WIN32
+    return stat(path.c_str(), path_stat);
+#else
+    return lstat(path.c_str(), path_stat);
+#endif
+}
+
+int create_directory(const std::string& path) {
+#ifdef _WIN32
+    return _mkdir(path.c_str());
+#else
+    return mkdir(path.c_str(), 0755);
+#endif
+}
+
+int remove_directory(const std::string& path) {
+#ifdef _WIN32
+    return _rmdir(path.c_str());
+#else
+    return rmdir(path.c_str());
+#endif
+}
+
+int remove_file(const std::string& path) {
+#ifdef _WIN32
+    return _unlink(path.c_str());
+#else
+    return unlink(path.c_str());
+#endif
+}
+
+}  // namespace
 
 std::string join_path(const std::string& lhs, const std::string& rhs) {
     if (lhs.empty()) {
@@ -26,12 +74,12 @@ std::string join_path(const std::string& lhs, const std::string& rhs) {
 
 bool path_exists(const std::string& path) {
     struct stat path_stat;
-    return lstat(path.c_str(), &path_stat) == 0;
+    return stat_path(path, &path_stat) == 0;
 }
 
 bool is_directory(const std::string& path) {
     struct stat path_stat;
-    if (stat(path.c_str(), &path_stat) != 0) {
+    if (stat_path(path, &path_stat) != 0) {
         return false;
     }
     return S_ISDIR(path_stat.st_mode);
@@ -47,18 +95,29 @@ bool create_directories(const std::string& path) {
     }
 
     std::string current_path;
+    std::string::size_type start_index = 0;
     if (path[0] == '/') {
         current_path = "/";
     }
+#ifdef _WIN32
+    if (path.size() >= 2 && std::isalpha(static_cast<unsigned char>(path[0])) && path[1] == ':') {
+        current_path = path.substr(0, 2);
+        start_index = 2;
+        if (path.size() >= 3 && path[2] == '/') {
+            current_path.push_back('/');
+            start_index = 3;
+        }
+    }
+#endif
 
     std::string current_part;
-    for (std::string::size_type index = 0; index < path.size(); ++index) {
+    for (std::string::size_type index = start_index; index < path.size(); ++index) {
         const char value = path[index];
         if (value == '/') {
             if (!current_part.empty()) {
                 current_path = join_path(current_path, current_part);
                 if (!is_directory(current_path)) {
-                    if (mkdir(current_path.c_str(), 0755) != 0 && errno != EEXIST) {
+                    if (create_directory(current_path) != 0 && errno != EEXIST) {
                         return false;
                     }
                 }
@@ -72,7 +131,7 @@ bool create_directories(const std::string& path) {
     if (!current_part.empty()) {
         current_path = join_path(current_path, current_part);
         if (!is_directory(current_path)) {
-            if (mkdir(current_path.c_str(), 0755) != 0 && errno != EEXIST) {
+            if (create_directory(current_path) != 0 && errno != EEXIST) {
                 return false;
             }
         }
@@ -165,7 +224,7 @@ bool copy_directory_recursive(const std::string& src_path, const std::string& ds
         const std::string dst_child_path = join_path(dst_path, name);
 
         struct stat child_stat;
-        if (lstat(src_child_path.c_str(), &child_stat) != 0) {
+        if (stat_path(src_child_path, &child_stat) != 0) {
             success = false;
             break;
         }
@@ -189,7 +248,7 @@ bool copy_directory_recursive(const std::string& src_path, const std::string& ds
 
 bool remove_directory_recursive(const std::string& path) {
     struct stat path_stat;
-    if (lstat(path.c_str(), &path_stat) != 0) {
+    if (stat_path(path, &path_stat) != 0) {
         return errno == ENOENT;
     }
 
@@ -219,13 +278,49 @@ bool remove_directory_recursive(const std::string& path) {
             return false;
         }
 
-        return rmdir(path.c_str()) == 0;
+        return remove_directory(path) == 0;
     }
 
-    return unlink(path.c_str()) == 0;
+    return remove_file(path) == 0;
 }
 
 std::string create_temp_directory(const std::string& prefix) {
+#ifdef _WIN32
+    if (!create_directories("tmp")) {
+        return std::string();
+    }
+
+    std::string prefix_value = prefix.empty() ? std::string("stmanager") : prefix;
+    for (std::string::size_type index = 0; index < prefix_value.size(); ++index) {
+        const char value = prefix_value[index];
+        const bool is_safe_char =
+            std::isalnum(static_cast<unsigned char>(value)) || value == '-' || value == '_';
+        if (!is_safe_char) {
+            prefix_value[index] = '_';
+        }
+    }
+
+    static bool seeded = false;
+    if (!seeded) {
+        std::srand(static_cast<unsigned int>(std::time(NULL)));
+        seeded = true;
+    }
+
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        char suffix[32];
+        std::snprintf(suffix, sizeof(suffix), "%u-%d", static_cast<unsigned int>(std::rand()),
+                      attempt);
+        const std::string candidate_path = join_path("tmp", prefix_value + "-" + suffix);
+        if (create_directory(candidate_path) == 0) {
+            return candidate_path;
+        }
+        if (errno != EEXIST && errno != EACCES) {
+            return std::string();
+        }
+    }
+
+    return std::string();
+#else
     char template_buffer[PATH_MAX];
     std::snprintf(template_buffer, sizeof(template_buffer), "/tmp/%s-XXXXXX", prefix.c_str());
     char* created_path = mkdtemp(template_buffer);
@@ -234,6 +329,7 @@ std::string create_temp_directory(const std::string& prefix) {
     }
 
     return std::string(created_path);
+#endif
 }
 
 std::string create_sillytavern_fixture(const std::string& case_name) {

@@ -34,6 +34,55 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
         run: ctest --preset linux-debug
 
+  windows-native-mingw64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 MinGW64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-ninja
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$env:GITHUB_WORKSPACE/vcpkg"
+          & "$env:GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.bat"
+
+      - name: Configure
+        shell: pwsh
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: cmake --preset windows-native-mingw64-release-static
+
+      - name: Build
+        shell: pwsh
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: cmake --build --preset windows-native-mingw64-release-static -j
+
+      - name: Test
+        shell: pwsh
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: ctest --preset windows-native-mingw64-release-static
+
+      - name: Upload Windows MinGW64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-mingw64-release-static
+          path: |
+            build/windows-native-mingw64-release-static/stmanager.exe
+            build/windows-native-mingw64-release-static/libSTManager*
+          if-no-files-found: warn
+
   linux-cross-windows:
     runs-on: ubuntu-latest
     steps:

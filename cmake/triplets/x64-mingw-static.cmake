@@ -2,3 +2,8 @@ set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CMAKE_SYSTEM_NAME MinGW)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
+
+if(CMAKE_HOST_WIN32)
+    # Let vcpkg port builds see the MinGW toolchain from PATH.
+    list(APPEND VCPKG_ENV_PASSTHROUGH_UNTRACKED PATH)
+endif()

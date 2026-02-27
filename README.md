@@ -39,14 +39,22 @@ cmake --build --preset linux-debug -j
 ctest --preset linux-debug
 ```
 
-### Windows Build (MinGW)
+### Windows Build (MinGW64)
 
-On Windows host (MSYS2/MinGW available in `PATH`):
+On Windows host (MSYS2 MinGW64 toolchain available in `PATH`):
 
 ```bash
-cmake --preset windows-native-mingw-release-static
-cmake --build --preset windows-native-mingw-release-static -j
-ctest --preset windows-native-mingw-release-static
+cmake --preset windows-native-mingw64-release-static
+cmake --build --preset windows-native-mingw64-release-static -j
+ctest --preset windows-native-mingw64-release-static
+```
+
+Optional native debug build:
+
+```bash
+cmake --preset windows-native-mingw64-debug
+cmake --build --preset windows-native-mingw64-debug -j
+ctest --preset windows-native-mingw64-debug
 ```
 
 ### Linux -> Windows x64 Cross Build

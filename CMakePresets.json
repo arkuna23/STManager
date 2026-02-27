@@ -49,8 +49,9 @@
       }
     },
     {
-      "name": "windows-native-mingw-release-static",
-      "inherits": "base-release",
+      "name": "windows-native-mingw64-base",
+      "hidden": true,
+      "inherits": "base",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -58,8 +59,30 @@
       },
       "cacheVariables": {
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
-        "VCPKG_TARGET_TRIPLET": "x64-mingw-static"
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_RC_COMPILER": "windres",
+        "STMANAGER_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "windows-native-mingw64-debug",
+      "inherits": "windows-native-mingw64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-native-mingw64-release-static",
+      "inherits": "windows-native-mingw64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-native-mingw-release-static",
+      "inherits": "windows-native-mingw64-release-static"
     },
     {
       "name": "linux-cross-windows-x64-release",
@@ -109,6 +132,14 @@
       "configurePreset": "linux-release-static"
     },
     {
+      "name": "windows-native-mingw64-debug",
+      "configurePreset": "windows-native-mingw64-debug"
+    },
+    {
+      "name": "windows-native-mingw64-release-static",
+      "configurePreset": "windows-native-mingw64-release-static"
+    },
+    {
       "name": "windows-native-mingw-release-static",
       "configurePreset": "windows-native-mingw-release-static"
     },
@@ -132,6 +163,20 @@
     {
       "name": "linux-release-static",
       "configurePreset": "linux-release-static",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-native-mingw64-debug",
+      "configurePreset": "windows-native-mingw64-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-native-mingw64-release-static",
+      "configurePreset": "windows-native-mingw64-release-static",
       "output": {
         "outputOnFailure": true
       }

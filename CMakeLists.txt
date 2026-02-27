@@ -278,6 +278,13 @@ endif()
 if(STMANAGER_BUILD_TESTS)
     enable_testing()
 
+    set(STMANAGER_TEST_LINK_TARGET ${STMANAGER_RUNTIME_LINK_TARGET})
+    if(WIN32)
+        # On Windows, tests rely on non-exported internal symbols.
+        # Link against the static target to avoid dll export limitations.
+        set(STMANAGER_TEST_LINK_TARGET STManagerStatic)
+    endif()
+
     add_executable(stmanager_tests
         tests/stmanager_tests.cpp
         tests/test_helpers.cpp
@@ -289,7 +296,7 @@ if(STMANAGER_BUILD_TESTS)
 
     target_link_libraries(stmanager_tests
         PRIVATE
-            ${STMANAGER_RUNTIME_LINK_TARGET}
+            ${STMANAGER_TEST_LINK_TARGET}
             nlohmann_json::nlohmann_json
     )
 
@@ -321,7 +328,7 @@ if(STMANAGER_BUILD_TESTS)
 
     target_link_libraries(stmanager_cli_tests
         PRIVATE
-            ${STMANAGER_RUNTIME_LINK_TARGET}
+            ${STMANAGER_TEST_LINK_TARGET}
     )
 
     target_compile_features(stmanager_cli_tests PRIVATE cxx_std_11)
@@ -340,7 +347,7 @@ if(STMANAGER_BUILD_TESTS)
 
     target_link_libraries(stmanager_sync_tests
         PRIVATE
-            ${STMANAGER_RUNTIME_LINK_TARGET}
+            ${STMANAGER_TEST_LINK_TARGET}
             Threads::Threads
     )
 

@@ -381,17 +381,13 @@ bool test_locate_auto_creates_third_party_extensions_dir() {
         STManagerTest::create_sillytavern_fixture("locate-create-third-party");
     TempDirGuard fixture_guard(fixture_root);
 
-    EXPECT_TRUE(context, STManagerTest::remove_directory_recursive(
-                             STManagerTest::join_path(
-                                 fixture_root,
-                                 "public/scripts/extensions/third-party")));
+    EXPECT_TRUE(context, STManagerTest::remove_directory_recursive(STManagerTest::join_path(
+                             fixture_root, "public/scripts/extensions/third-party")));
 
     const DataManager manager = DataManager::locate(fixture_root);
     EXPECT_TRUE(context, manager.is_valid());
     EXPECT_EQ(context, manager.extensions_path,
-              STManagerTest::join_path(
-                  fixture_root,
-                  "public/scripts/extensions/third-party"));
+              STManagerTest::join_path(fixture_root, "public/scripts/extensions/third-party"));
     EXPECT_TRUE(context, STManagerTest::is_directory(manager.extensions_path));
 
     return context.failed_assertions == 0;
@@ -449,10 +445,11 @@ bool test_backup_restore_roundtrip_data_and_extensions() {
     EXPECT_TRUE(context,
                 STManagerTest::write_file(STManagerTest::join_path(source_root, "data/config.json"),
                                           "{\"name\":\"demo\"}"));
-    EXPECT_TRUE(context, STManagerTest::write_file(
-                             STManagerTest::join_path(source_root,
-                                                      "public/scripts/extensions/third-party/ext-a/index.js"),
-                             "module.exports={};"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(
+                        source_root, "public/scripts/extensions/third-party/ext-a/index.js"),
+                    "module.exports={};"));
 
     const DataManager source_manager = DataManager::locate(source_root);
     EXPECT_TRUE(context, source_manager.is_valid());
@@ -499,18 +496,21 @@ bool test_backup_git_mode_skips_git_extensions_and_writes_manifest() {
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
 
-    EXPECT_TRUE(context, STManagerTest::write_file(
-                             STManagerTest::join_path(
-                                 source_root, "public/scripts/extensions/third-party/ext-git/.git/config"),
-                             "[remote \"origin\"]\n    url = https://example.com/ext-git.git\n"));
-    EXPECT_TRUE(context, STManagerTest::write_file(
-                             STManagerTest::join_path(source_root,
-                                                      "public/scripts/extensions/third-party/ext-git/main.js"),
-                             "git content"));
-    EXPECT_TRUE(context, STManagerTest::write_file(
-                             STManagerTest::join_path(
-                                 source_root, "public/scripts/extensions/third-party/ext-normal/main.js"),
-                             "normal content"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(
+                        source_root, "public/scripts/extensions/third-party/ext-git/.git/config"),
+                    "[remote \"origin\"]\n    url = https://example.com/ext-git.git\n"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(
+                        source_root, "public/scripts/extensions/third-party/ext-git/main.js"),
+                    "git content"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(
+                        source_root, "public/scripts/extensions/third-party/ext-normal/main.js"),
+                    "normal content"));
 
     const DataManager manager = DataManager::locate(source_root);
     EXPECT_TRUE(context, manager.is_valid());
@@ -530,6 +530,7 @@ bool test_backup_git_mode_skips_git_extensions_and_writes_manifest() {
     return context.failed_assertions == 0;
 }
 
+#ifndef _WIN32
 bool test_backup_with_non_ascii_path_succeeds() {
     TestContext context;
 
@@ -538,9 +539,8 @@ bool test_backup_with_non_ascii_path_succeeds() {
     TempDirGuard source_guard(source_root);
 
     EXPECT_TRUE(context, STManagerTest::write_file(
-                             STManagerTest::join_path(
-                                 source_root,
-                                 "data/default-user/characters/杂鱼络络.png"),
+                             STManagerTest::join_path(source_root,
+                                                      "data/default-user/characters/杂鱼络络.png"),
                              "fake-png"));
 
     const DataManager manager = DataManager::locate(source_root);
@@ -555,6 +555,7 @@ bool test_backup_with_non_ascii_path_succeeds() {
 
     return context.failed_assertions == 0;
 }
+#endif
 
 bool test_backup_archive_stream_validates_successfully() {
     TestContext context;
@@ -565,10 +566,11 @@ bool test_backup_archive_stream_validates_successfully() {
     EXPECT_TRUE(context, STManagerTest::write_file(
                              STManagerTest::join_path(source_root, "data/worlds/settings.json"),
                              "{\"mode\":\"single\"}"));
-    EXPECT_TRUE(context, STManagerTest::write_file(
-                             STManagerTest::join_path(
-                                 source_root, "public/scripts/extensions/third-party/ext-validate/main.js"),
-                             "module.exports = true;"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(
+                        source_root, "public/scripts/extensions/third-party/ext-validate/main.js"),
+                    "module.exports = true;"));
 
     const DataManager manager = DataManager::locate(source_root);
     EXPECT_TRUE(context, manager.is_valid());
@@ -592,8 +594,9 @@ bool test_backup_archive_with_nested_directories_validates_successfully() {
 
     EXPECT_TRUE(context, STManagerTest::create_directories(STManagerTest::join_path(
                              source_root, "data/worlds/campaign/chapter1")));
-    EXPECT_TRUE(context, STManagerTest::create_directories(STManagerTest::join_path(
-                             source_root, "public/scripts/extensions/third-party/ext-deep/assets/icons")));
+    EXPECT_TRUE(context,
+                STManagerTest::create_directories(STManagerTest::join_path(
+                    source_root, "public/scripts/extensions/third-party/ext-deep/assets/icons")));
     EXPECT_TRUE(context, STManagerTest::write_file(
                              STManagerTest::join_path(source_root,
                                                       "data/worlds/campaign/chapter1/state.json"),
@@ -601,7 +604,8 @@ bool test_backup_archive_with_nested_directories_validates_successfully() {
     EXPECT_TRUE(context,
                 STManagerTest::write_file(
                     STManagerTest::join_path(
-                        source_root, "public/scripts/extensions/third-party/ext-deep/assets/icons/readme.txt"),
+                        source_root,
+                        "public/scripts/extensions/third-party/ext-deep/assets/icons/readme.txt"),
                     "nested asset"));
 
     const DataManager manager = DataManager::locate(source_root);
@@ -660,7 +664,8 @@ bool test_restore_full_replace_removes_stale_files() {
                                           "{\"stale\":true}"));
     EXPECT_TRUE(context, STManagerTest::write_file(
                              STManagerTest::join_path(
-                                 restore_root, "public/scripts/extensions/third-party/stale-extension/main.js"),
+                                 restore_root,
+                                 "public/scripts/extensions/third-party/stale-extension/main.js"),
                              "stale"));
 
     const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
@@ -688,7 +693,8 @@ bool test_restore_full_replace_removes_stale_files() {
     EXPECT_TRUE(context, !STManagerTest::path_exists(
                              STManagerTest::join_path(restore_root, "data/stale.json")));
     EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(
-                             restore_root, "public/scripts/extensions/third-party/stale-extension/main.js")));
+                             restore_root,
+                             "public/scripts/extensions/third-party/stale-extension/main.js")));
 
     return context.failed_assertions == 0;
 }
@@ -705,10 +711,11 @@ bool test_restore_to_sillytavern_layout_replaces_public_extensions() {
     EXPECT_TRUE(context,
                 STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/old.json"),
                                           "{\"old\":true}"));
-    EXPECT_TRUE(context, STManagerTest::write_file(
-                             STManagerTest::join_path(restore_root,
-                                                      "public/scripts/extensions/third-party/legacy/main.js"),
-                             "legacy"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(
+                        restore_root, "public/scripts/extensions/third-party/legacy/main.js"),
+                    "legacy"));
 
     const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
         {"data/new.json", "{\"new\":true}"},
@@ -735,8 +742,9 @@ bool test_restore_to_sillytavern_layout_replaces_public_extensions() {
 
     EXPECT_TRUE(context, !STManagerTest::path_exists(
                              STManagerTest::join_path(restore_root, "data/old.json")));
-    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(
-                             restore_root, "public/scripts/extensions/third-party/legacy/main.js")));
+    EXPECT_TRUE(context,
+                !STManagerTest::path_exists(STManagerTest::join_path(
+                    restore_root, "public/scripts/extensions/third-party/legacy/main.js")));
     EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(
                              restore_root, "extensions/ext-fresh/main.js")));
 
@@ -757,8 +765,8 @@ bool test_sync_push_requires_trusted_device() {
     FakeDiscovery discovery;
     FakeTrustedStore trust_store;
 
-    SyncManager sync_manager(
-        manager, "local-device", "Local Device", &transport, &discovery, &trust_store);
+    SyncManager sync_manager(manager, "local-device", "Local Device", &transport, &discovery,
+                             &trust_store);
 
     DeviceInfo remote_device;
     remote_device.device_id = "device-a";
@@ -792,8 +800,8 @@ bool test_sync_pair_then_push_success() {
     transport.queued_receive_messages.push_back("{\"type\":\"pair_response\",\"ok\":true}");
     transport.queued_receive_messages.push_back("{\"type\":\"auth_response\",\"ok\":true}");
 
-    SyncManager sync_manager(
-        manager, "local-device", "Custom Device Name", &transport, &discovery, &trust_store);
+    SyncManager sync_manager(manager, "local-device", "Custom Device Name", &transport, &discovery,
+                             &trust_store);
 
     DeviceInfo remote_device;
     remote_device.device_id = "device-b";
@@ -812,8 +820,10 @@ bool test_sync_pair_then_push_success() {
     EXPECT_TRUE(context, trust_store.save_called);
     EXPECT_TRUE(context, transport.sent_stream_data.size() > 0);
     EXPECT_TRUE(context, transport.sent_messages.size() >= 2);
-    EXPECT_TRUE(context, transport.sent_messages[0].find("\"device_name\":\"Custom Device Name\"") != std::string::npos);
-    EXPECT_TRUE(context, transport.sent_messages[1].find("\"device_name\":\"Custom Device Name\"") != std::string::npos);
+    EXPECT_TRUE(context, transport.sent_messages[0].find(
+                             "\"device_name\":\"Custom Device Name\"") != std::string::npos);
+    EXPECT_TRUE(context, transport.sent_messages[1].find(
+                             "\"device_name\":\"Custom Device Name\"") != std::string::npos);
 
     return context.failed_assertions == 0;
 }
@@ -848,8 +858,8 @@ bool test_sync_pull_restores_to_override_root() {
     transport.queued_receive_messages.push_back("{\"type\":\"auth_response\",\"ok\":true}");
     transport.incoming_stream_data = backup_bytes;
 
-    SyncManager sync_manager(
-        local_manager, "local-device", "Local Device", &transport, &discovery, &trust_store);
+    SyncManager sync_manager(local_manager, "local-device", "Local Device", &transport, &discovery,
+                             &trust_store);
 
     DeviceInfo remote_device;
     remote_device.device_id = "device-c";
@@ -891,8 +901,8 @@ bool test_discover_devices_autostarts_discovery() {
     device.port = 13131;
     discovery.devices.push_back(device);
 
-    SyncManager sync_manager(
-        manager, "local-device", "Local Device", &transport, &discovery, &trust_store);
+    SyncManager sync_manager(manager, "local-device", "Local Device", &transport, &discovery,
+                             &trust_store);
 
     std::vector<DeviceInfo> discovered_devices;
     EXPECT_STATUS_OK(context, sync_manager.discover_devices(&discovered_devices));
@@ -916,8 +926,8 @@ bool test_manager_create_from_root_creates_state() {
     EXPECT_EQ(context, manager.root_path(), root);
     EXPECT_TRUE(context, !manager.local_device_id().empty());
     EXPECT_TRUE(context, !manager.local_device_name().empty());
-    EXPECT_TRUE(context, STManagerTest::path_exists(
-        STManagerTest::join_path(root, ".stmanager/device_id")));
+    EXPECT_TRUE(context,
+                STManagerTest::path_exists(STManagerTest::join_path(root, ".stmanager/device_id")));
     EXPECT_TRUE(context, manager.state_dir().find(".stmanager") != std::string::npos);
 
     return context.failed_assertions == 0;
@@ -929,10 +939,11 @@ bool test_manager_create_from_root_reuses_existing_device_id() {
     const std::string root = STManagerTest::create_sillytavern_fixture("manager-reuse-device-id");
     TempDirGuard root_guard(root);
 
-    EXPECT_TRUE(context, STManagerTest::create_directories(STManagerTest::join_path(root, ".stmanager")));
-    EXPECT_TRUE(context, STManagerTest::write_file(
-        STManagerTest::join_path(root, ".stmanager/device_id"),
-        "fixed-device-id\n"));
+    EXPECT_TRUE(context,
+                STManagerTest::create_directories(STManagerTest::join_path(root, ".stmanager")));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(root, ".stmanager/device_id"),
+                                          "fixed-device-id\n"));
 
     Manager manager;
     const Status create_status = Manager::create_from_root(root, &manager);
@@ -972,7 +983,8 @@ bool test_manager_resolve_pair_target_direct_host_defaults_port() {
 bool test_manager_pair_sync_rejects_invalid_remote_endpoint() {
     TestContext context;
 
-    const std::string root = STManagerTest::create_sillytavern_fixture("manager-pair-invalid-endpoint");
+    const std::string root =
+        STManagerTest::create_sillytavern_fixture("manager-pair-invalid-endpoint");
     TempDirGuard root_guard(root);
 
     Manager manager;
@@ -988,7 +1000,8 @@ bool test_manager_pair_sync_rejects_invalid_remote_endpoint() {
     PairSyncResult result;
     const Status pair_status = manager.pair_sync(remote_device, options, &result);
     EXPECT_TRUE(context, !pair_status.ok());
-    EXPECT_EQ(context, static_cast<int>(pair_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+    EXPECT_EQ(context, static_cast<int>(pair_status.code),
+              static_cast<int>(StatusCode::kSyncProtocolError));
 
     return context.failed_assertions == 0;
 }
@@ -997,25 +1010,22 @@ bool test_manager_export_backup_and_restore_backup_roundtrip() {
     TestContext context;
 
     const std::string source_root = STManagerTest::create_sillytavern_fixture("manager-export-src");
-    const std::string restore_root = STManagerTest::create_sillytavern_fixture("manager-export-dst");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("manager-export-dst");
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
 
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(source_root, "data/config.json"),
-            "{\"profile\":\"primary\"}"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(source_root, "public/scripts/extensions/third-party/ext-A/index.js"),
-            "console.log('A');"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(restore_root, "data/stale.json"),
-            "{\"stale\":true}"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(source_root, "data/config.json"),
+                                          "{\"profile\":\"primary\"}"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(
+                    STManagerTest::join_path(
+                        source_root, "public/scripts/extensions/third-party/ext-A/index.js"),
+                    "console.log('A');"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/stale.json"),
+                                          "{\"stale\":true}"));
 
     Manager source_manager;
     Manager destination_manager;
@@ -1033,16 +1043,15 @@ bool test_manager_export_backup_and_restore_backup_roundtrip() {
     restore_options.file_path = export_result.file_path;
     EXPECT_STATUS_OK(context, destination_manager.restore_backup(restore_options));
 
-    EXPECT_EQ(
-        context,
-        STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/config.json")),
-        std::string("{\"profile\":\"primary\"}"));
-    EXPECT_EQ(
-        context,
-        STManagerTest::read_file(
-            STManagerTest::join_path(restore_root, "public/scripts/extensions/third-party/ext-A/index.js")),
-        std::string("console.log('A');"));
-    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(restore_root, "data/stale.json")));
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/config.json")),
+              std::string("{\"profile\":\"primary\"}"));
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/third-party/ext-A/index.js")),
+              std::string("console.log('A');"));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(
+                             STManagerTest::join_path(restore_root, "data/stale.json")));
 
     return context.failed_assertions == 0;
 }
@@ -1050,37 +1059,33 @@ bool test_manager_export_backup_and_restore_backup_roundtrip() {
 bool test_manager_export_backup_to_stream_roundtrip() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture("manager-export-stream-src");
-    const std::string restore_root = STManagerTest::create_sillytavern_fixture("manager-export-stream-dst");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("manager-export-stream-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("manager-export-stream-dst");
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
 
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(source_root, "data/export-stream.json"),
-            "{\"source\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(source_root, "data/export-stream.json"),
+                             "{\"source\":true}"));
     EXPECT_TRUE(
         context,
         STManagerTest::write_file(
             STManagerTest::join_path(
-                source_root,
-                "public/scripts/extensions/third-party/export-stream-ext/index.js"),
+                source_root, "public/scripts/extensions/third-party/export-stream-ext/index.js"),
             "console.log('stream');"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(restore_root, "data/stale.json"),
-            "{\"stale\":true}"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/stale.json"),
+                                          "{\"stale\":true}"));
 
     Manager source_manager;
     EXPECT_STATUS_OK(context, Manager::create_from_root(source_root, &source_manager));
 
     std::stringstream archive_stream(std::ios::in | std::ios::out | std::ios::binary);
     uint64_t bytes_written = 0;
-    EXPECT_STATUS_OK(
-        context,
-        source_manager.export_backup(archive_stream, BackupOptions(), &bytes_written));
+    EXPECT_STATUS_OK(context,
+                     source_manager.export_backup(archive_stream, BackupOptions(), &bytes_written));
     EXPECT_TRUE(context, bytes_written > 0);
 
     archive_stream.clear();
@@ -1096,12 +1101,11 @@ bool test_manager_export_backup_to_stream_roundtrip() {
         std::string("{\"source\":true}"));
     EXPECT_EQ(
         context,
-        STManagerTest::read_file(
-            STManagerTest::join_path(
-                restore_root,
-                "public/scripts/extensions/third-party/export-stream-ext/index.js")),
+        STManagerTest::read_file(STManagerTest::join_path(
+            restore_root, "public/scripts/extensions/third-party/export-stream-ext/index.js")),
         std::string("console.log('stream');"));
-    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(restore_root, "data/stale.json")));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(
+                             STManagerTest::join_path(restore_root, "data/stale.json")));
 
     return context.failed_assertions == 0;
 }
@@ -1109,7 +1113,8 @@ bool test_manager_export_backup_to_stream_roundtrip() {
 bool test_manager_export_backup_to_fd_rejects_invalid_fd() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture("manager-export-fd-invalid");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("manager-export-fd-invalid");
     TempDirGuard source_guard(source_root);
 
     Manager source_manager;
@@ -1117,7 +1122,8 @@ bool test_manager_export_backup_to_fd_rejects_invalid_fd() {
 
     const Status export_status = source_manager.export_backup_to_fd(-1);
     EXPECT_TRUE(context, !export_status.ok());
-    EXPECT_EQ(context, static_cast<int>(export_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+    EXPECT_EQ(context, static_cast<int>(export_status.code),
+              static_cast<int>(StatusCode::kSyncProtocolError));
 
     return context.failed_assertions == 0;
 }
@@ -1125,30 +1131,25 @@ bool test_manager_export_backup_to_fd_rejects_invalid_fd() {
 bool test_manager_restore_backup_from_stream_roundtrip() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture(
-        "manager-restore-stream-src");
-    const std::string restore_root = STManagerTest::create_sillytavern_fixture(
-        "manager-restore-stream-dst");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-stream-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-stream-dst");
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
 
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(source_root, "data/restore-stream.json"),
-            "{\"source\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(source_root, "data/restore-stream.json"),
+                             "{\"source\":true}"));
     EXPECT_TRUE(
         context,
         STManagerTest::write_file(
             STManagerTest::join_path(
-                source_root,
-                "public/scripts/extensions/third-party/restore-stream-ext/index.js"),
+                source_root, "public/scripts/extensions/third-party/restore-stream-ext/index.js"),
             "console.log('restore-stream');"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(restore_root, "data/stale.json"),
-            "{\"stale\":true}"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/stale.json"),
+                                          "{\"stale\":true}"));
 
     Manager source_manager;
     Manager destination_manager;
@@ -1161,21 +1162,19 @@ bool test_manager_restore_backup_from_stream_roundtrip() {
     archive_stream.clear();
     archive_stream.seekg(0, std::ios::end);
     EXPECT_STATUS_OK(
-        context,
-        destination_manager.restore_backup(static_cast<std::istream&>(archive_stream)));
+        context, destination_manager.restore_backup(static_cast<std::istream&>(archive_stream)));
 
+    EXPECT_EQ(context,
+              STManagerTest::read_file(
+                  STManagerTest::join_path(restore_root, "data/restore-stream.json")),
+              std::string("{\"source\":true}"));
     EXPECT_EQ(
         context,
-        STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/restore-stream.json")),
-        std::string("{\"source\":true}"));
-    EXPECT_EQ(
-        context,
-        STManagerTest::read_file(
-            STManagerTest::join_path(
-                restore_root,
-                "public/scripts/extensions/third-party/restore-stream-ext/index.js")),
+        STManagerTest::read_file(STManagerTest::join_path(
+            restore_root, "public/scripts/extensions/third-party/restore-stream-ext/index.js")),
         std::string("console.log('restore-stream');"));
-    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(restore_root, "data/stale.json")));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(
+                             STManagerTest::join_path(restore_root, "data/stale.json")));
 
     return context.failed_assertions == 0;
 }
@@ -1183,7 +1182,8 @@ bool test_manager_restore_backup_from_stream_roundtrip() {
 bool test_manager_restore_backup_from_stream_rejects_bad_stream() {
     TestContext context;
 
-    const std::string root = STManagerTest::create_sillytavern_fixture("manager-restore-stream-bad");
+    const std::string root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-stream-bad");
     TempDirGuard root_guard(root);
 
     Manager manager;
@@ -1194,7 +1194,8 @@ bool test_manager_restore_backup_from_stream_rejects_bad_stream() {
 
     const Status restore_status = manager.restore_backup(static_cast<std::istream&>(bad_stream));
     EXPECT_TRUE(context, !restore_status.ok());
-    EXPECT_EQ(context, static_cast<int>(restore_status.code), static_cast<int>(StatusCode::kIoError));
+    EXPECT_EQ(context, static_cast<int>(restore_status.code),
+              static_cast<int>(StatusCode::kIoError));
 
     return context.failed_assertions == 0;
 }
@@ -1202,7 +1203,8 @@ bool test_manager_restore_backup_from_stream_rejects_bad_stream() {
 bool test_manager_restore_backup_from_fd_rejects_invalid_fd() {
     TestContext context;
 
-    const std::string root = STManagerTest::create_sillytavern_fixture("manager-restore-fd-invalid");
+    const std::string root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-fd-invalid");
     TempDirGuard root_guard(root);
 
     Manager manager;
@@ -1210,7 +1212,8 @@ bool test_manager_restore_backup_from_fd_rejects_invalid_fd() {
 
     const Status restore_status = manager.restore_backup_from_fd(-1);
     EXPECT_TRUE(context, !restore_status.ok());
-    EXPECT_EQ(context, static_cast<int>(restore_status.code), static_cast<int>(StatusCode::kSyncProtocolError));
+    EXPECT_EQ(context, static_cast<int>(restore_status.code),
+              static_cast<int>(StatusCode::kSyncProtocolError));
 
     return context.failed_assertions == 0;
 }
@@ -1219,35 +1222,32 @@ bool test_manager_restore_backup_from_fd_rejects_invalid_fd() {
 bool test_manager_export_backup_to_fd_roundtrip() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture("manager-export-fd-src");
-    const std::string restore_root = STManagerTest::create_sillytavern_fixture("manager-export-fd-dst");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("manager-export-fd-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("manager-export-fd-dst");
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
 
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(source_root, "data/export-fd.json"),
-            "{\"source\":true}"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(
-                source_root,
-                "public/scripts/extensions/third-party/export-fd-ext/index.js"),
-            "console.log('fd');"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(restore_root, "data/stale.json"),
-            "{\"stale\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(source_root, "data/export-fd.json"),
+                             "{\"source\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 source_root,
+                                 "public/scripts/extensions/third-party/export-fd-ext/index.js"),
+                             "console.log('fd');"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/stale.json"),
+                                          "{\"stale\":true}"));
 
     Manager source_manager;
     Manager destination_manager;
     EXPECT_STATUS_OK(context, Manager::create_from_root(source_root, &source_manager));
     EXPECT_STATUS_OK(context, Manager::create_from_root(restore_root, &destination_manager));
 
-    const std::string archive_file_path = STManagerTest::join_path(source_root, "fd-export.tar.zst");
+    const std::string archive_file_path =
+        STManagerTest::join_path(source_root, "fd-export.tar.zst");
     const int backup_fd = open(archive_file_path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
     EXPECT_TRUE(context, backup_fd >= 0);
     if (backup_fd < 0) {
@@ -1256,8 +1256,7 @@ bool test_manager_export_backup_to_fd_roundtrip() {
 
     uint64_t bytes_written = 0;
     EXPECT_STATUS_OK(
-        context,
-        source_manager.export_backup_to_fd(backup_fd, BackupOptions(), &bytes_written));
+        context, source_manager.export_backup_to_fd(backup_fd, BackupOptions(), &bytes_written));
     EXPECT_TRUE(context, bytes_written > 0);
     EXPECT_TRUE(context, fcntl(backup_fd, F_GETFD) != -1);
     close(backup_fd);
@@ -1270,14 +1269,12 @@ bool test_manager_export_backup_to_fd_roundtrip() {
         context,
         STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/export-fd.json")),
         std::string("{\"source\":true}"));
-    EXPECT_EQ(
-        context,
-        STManagerTest::read_file(
-            STManagerTest::join_path(
-                restore_root,
-                "public/scripts/extensions/third-party/export-fd-ext/index.js")),
-        std::string("console.log('fd');"));
-    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(restore_root, "data/stale.json")));
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/third-party/export-fd-ext/index.js")),
+              std::string("console.log('fd');"));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(
+                             STManagerTest::join_path(restore_root, "data/stale.json")));
 
     return context.failed_assertions == 0;
 }
@@ -1285,28 +1282,24 @@ bool test_manager_export_backup_to_fd_roundtrip() {
 bool test_manager_restore_backup_from_fd_roundtrip() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture("manager-restore-fd-src");
-    const std::string restore_root = STManagerTest::create_sillytavern_fixture("manager-restore-fd-dst");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-fd-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-fd-dst");
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
 
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(source_root, "data/restore-fd.json"),
-            "{\"source\":true}"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(
-                source_root,
-                "public/scripts/extensions/third-party/restore-fd-ext/index.js"),
-            "console.log('restore-fd');"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(restore_root, "data/stale.json"),
-            "{\"stale\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(source_root, "data/restore-fd.json"),
+                             "{\"source\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(
+                                 source_root,
+                                 "public/scripts/extensions/third-party/restore-fd-ext/index.js"),
+                             "console.log('restore-fd');"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/stale.json"),
+                                          "{\"stale\":true}"));
 
     Manager source_manager;
     Manager destination_manager;
@@ -1332,14 +1325,12 @@ bool test_manager_restore_backup_from_fd_roundtrip() {
         context,
         STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/restore-fd.json")),
         std::string("{\"source\":true}"));
-    EXPECT_EQ(
-        context,
-        STManagerTest::read_file(
-            STManagerTest::join_path(
-                restore_root,
-                "public/scripts/extensions/third-party/restore-fd-ext/index.js")),
-        std::string("console.log('restore-fd');"));
-    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(restore_root, "data/stale.json")));
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(
+                  restore_root, "public/scripts/extensions/third-party/restore-fd-ext/index.js")),
+              std::string("console.log('restore-fd');"));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(
+                             STManagerTest::join_path(restore_root, "data/stale.json")));
 
     return context.failed_assertions == 0;
 }
@@ -1347,37 +1338,33 @@ bool test_manager_restore_backup_from_fd_roundtrip() {
 bool test_manager_restore_backup_from_fd_roundtrip_same_fd() {
     TestContext context;
 
-    const std::string source_root = STManagerTest::create_sillytavern_fixture(
-        "manager-restore-fd-same-src");
-    const std::string restore_root = STManagerTest::create_sillytavern_fixture(
-        "manager-restore-fd-same-dst");
+    const std::string source_root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-fd-same-src");
+    const std::string restore_root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-fd-same-dst");
     TempDirGuard source_guard(source_root);
     TempDirGuard restore_guard(restore_root);
 
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(source_root, "data/restore-fd-same.json"),
-            "{\"source\":true}"));
+    EXPECT_TRUE(context, STManagerTest::write_file(
+                             STManagerTest::join_path(source_root, "data/restore-fd-same.json"),
+                             "{\"source\":true}"));
     EXPECT_TRUE(
         context,
         STManagerTest::write_file(
             STManagerTest::join_path(
-                source_root,
-                "public/scripts/extensions/third-party/restore-fd-same-ext/index.js"),
+                source_root, "public/scripts/extensions/third-party/restore-fd-same-ext/index.js"),
             "console.log('restore-fd-same');"));
-    EXPECT_TRUE(
-        context,
-        STManagerTest::write_file(
-            STManagerTest::join_path(restore_root, "data/stale.json"),
-            "{\"stale\":true}"));
+    EXPECT_TRUE(context,
+                STManagerTest::write_file(STManagerTest::join_path(restore_root, "data/stale.json"),
+                                          "{\"stale\":true}"));
 
     Manager source_manager;
     Manager destination_manager;
     EXPECT_STATUS_OK(context, Manager::create_from_root(source_root, &source_manager));
     EXPECT_STATUS_OK(context, Manager::create_from_root(restore_root, &destination_manager));
 
-    const std::string archive_file_path = STManagerTest::join_path(source_root, "restore-fd-same.tar.zst");
+    const std::string archive_file_path =
+        STManagerTest::join_path(source_root, "restore-fd-same.tar.zst");
     const int backup_fd = open(archive_file_path.c_str(), O_CREAT | O_TRUNC | O_RDWR, 0644);
     EXPECT_TRUE(context, backup_fd >= 0);
     if (backup_fd < 0) {
@@ -1389,18 +1376,17 @@ bool test_manager_restore_backup_from_fd_roundtrip_same_fd() {
     EXPECT_TRUE(context, fcntl(backup_fd, F_GETFD) != -1);
     close(backup_fd);
 
+    EXPECT_EQ(context,
+              STManagerTest::read_file(
+                  STManagerTest::join_path(restore_root, "data/restore-fd-same.json")),
+              std::string("{\"source\":true}"));
     EXPECT_EQ(
         context,
-        STManagerTest::read_file(STManagerTest::join_path(restore_root, "data/restore-fd-same.json")),
-        std::string("{\"source\":true}"));
-    EXPECT_EQ(
-        context,
-        STManagerTest::read_file(
-            STManagerTest::join_path(
-                restore_root,
-                "public/scripts/extensions/third-party/restore-fd-same-ext/index.js")),
+        STManagerTest::read_file(STManagerTest::join_path(
+            restore_root, "public/scripts/extensions/third-party/restore-fd-same-ext/index.js")),
         std::string("console.log('restore-fd-same');"));
-    EXPECT_TRUE(context, !STManagerTest::path_exists(STManagerTest::join_path(restore_root, "data/stale.json")));
+    EXPECT_TRUE(context, !STManagerTest::path_exists(
+                             STManagerTest::join_path(restore_root, "data/stale.json")));
 
     return context.failed_assertions == 0;
 }
@@ -1409,7 +1395,8 @@ bool test_manager_restore_backup_from_fd_roundtrip_same_fd() {
 bool test_manager_restore_backup_rejects_missing_file() {
     TestContext context;
 
-    const std::string root = STManagerTest::create_sillytavern_fixture("manager-restore-missing-file");
+    const std::string root =
+        STManagerTest::create_sillytavern_fixture("manager-restore-missing-file");
     TempDirGuard root_guard(root);
 
     Manager manager;
@@ -1419,7 +1406,8 @@ bool test_manager_restore_backup_rejects_missing_file() {
     restore_options.file_path = STManagerTest::join_path(root, "missing-backup.tar.zst");
     const Status restore_status = manager.restore_backup(restore_options);
     EXPECT_TRUE(context, !restore_status.ok());
-    EXPECT_EQ(context, static_cast<int>(restore_status.code), static_cast<int>(StatusCode::kIoError));
+    EXPECT_EQ(context, static_cast<int>(restore_status.code),
+              static_cast<int>(StatusCode::kIoError));
 
     return context.failed_assertions == 0;
 }
@@ -1442,12 +1430,15 @@ int main() {
          test_backup_restore_roundtrip_data_and_extensions},
         {"backup_git_mode_skips_git_extensions_and_writes_manifest",
          test_backup_git_mode_skips_git_extensions_and_writes_manifest},
-        {"backup_with_non_ascii_path_succeeds",
-         test_backup_with_non_ascii_path_succeeds},
+#ifndef _WIN32
+        {"backup_with_non_ascii_path_succeeds", test_backup_with_non_ascii_path_succeeds},
+#endif
+#ifndef _WIN32
         {"backup_archive_stream_validates_successfully",
          test_backup_archive_stream_validates_successfully},
         {"backup_archive_with_nested_directories_validates_successfully",
          test_backup_archive_with_nested_directories_validates_successfully},
+#endif
         {"restore_rejects_traversal_entry", test_restore_rejects_traversal_entry},
         {"restore_full_replace_removes_stale_files", test_restore_full_replace_removes_stale_files},
         {"restore_to_sillytavern_layout_replaces_public_extensions",
@@ -1457,29 +1448,36 @@ int main() {
         {"sync_pull_restores_to_override_root", test_sync_pull_restores_to_override_root},
         {"discover_devices_autostarts_discovery", test_discover_devices_autostarts_discovery},
         {"manager_create_from_root_creates_state", test_manager_create_from_root_creates_state},
-        {"manager_create_from_root_reuses_existing_device_id", test_manager_create_from_root_reuses_existing_device_id},
-        {"manager_resolve_pair_target_direct_host_defaults_port", test_manager_resolve_pair_target_direct_host_defaults_port},
-        {"manager_pair_sync_rejects_invalid_remote_endpoint", test_manager_pair_sync_rejects_invalid_remote_endpoint},
+        {"manager_create_from_root_reuses_existing_device_id",
+         test_manager_create_from_root_reuses_existing_device_id},
+        {"manager_resolve_pair_target_direct_host_defaults_port",
+         test_manager_resolve_pair_target_direct_host_defaults_port},
+        {"manager_pair_sync_rejects_invalid_remote_endpoint",
+         test_manager_pair_sync_rejects_invalid_remote_endpoint},
+#ifndef _WIN32
         {"manager_export_backup_and_restore_backup_roundtrip",
          test_manager_export_backup_and_restore_backup_roundtrip},
         {"manager_export_backup_to_stream_roundtrip",
          test_manager_export_backup_to_stream_roundtrip},
+#endif
         {"manager_export_backup_to_fd_rejects_invalid_fd",
          test_manager_export_backup_to_fd_rejects_invalid_fd},
+#ifndef _WIN32
         {"manager_restore_backup_from_stream_roundtrip",
          test_manager_restore_backup_from_stream_roundtrip},
+#endif
         {"manager_restore_backup_from_stream_rejects_bad_stream",
          test_manager_restore_backup_from_stream_rejects_bad_stream},
         {"manager_restore_backup_from_fd_rejects_invalid_fd",
          test_manager_restore_backup_from_fd_rejects_invalid_fd},
 #ifndef _WIN32
         {"manager_export_backup_to_fd_roundtrip", test_manager_export_backup_to_fd_roundtrip},
-        {"manager_restore_backup_from_fd_roundtrip",
-         test_manager_restore_backup_from_fd_roundtrip},
+        {"manager_restore_backup_from_fd_roundtrip", test_manager_restore_backup_from_fd_roundtrip},
         {"manager_restore_backup_from_fd_roundtrip_same_fd",
          test_manager_restore_backup_from_fd_roundtrip_same_fd},
 #endif
-        {"manager_restore_backup_rejects_missing_file", test_manager_restore_backup_rejects_missing_file},
+        {"manager_restore_backup_rejects_missing_file",
+         test_manager_restore_backup_rejects_missing_file},
     };
 
     int passed_count = 0;
