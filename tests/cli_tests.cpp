@@ -296,8 +296,45 @@ bool test_is_connectable_host_rejects_wildcard() {
 
     EXPECT_TRUE(context, !STManagerCli::is_connectable_host(""));
     EXPECT_TRUE(context, !STManagerCli::is_connectable_host("0.0.0.0"));
+    EXPECT_TRUE(context, !STManagerCli::is_connectable_host("::"));
+    EXPECT_TRUE(context, !STManagerCli::is_connectable_host("[::]"));
     EXPECT_TRUE(context, STManagerCli::is_connectable_host("127.0.0.1"));
     EXPECT_TRUE(context, STManagerCli::is_connectable_host("192.168.1.20"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_runtime_display_host_prefers_info_host_when_specific() {
+    TestContext context;
+
+    EXPECT_EQ(context, STManagerCli::runtime_display_host("192.168.1.10", "0.0.0.0"),
+              std::string("192.168.1.10"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_runtime_display_host_uses_bind_host_when_info_empty() {
+    TestContext context;
+
+    EXPECT_EQ(context, STManagerCli::runtime_display_host("", "0.0.0.0"), std::string("0.0.0.0"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_runtime_display_host_keeps_wildcard_not_localhost() {
+    TestContext context;
+
+    EXPECT_EQ(context, STManagerCli::runtime_display_host("0.0.0.0", "0.0.0.0"),
+              std::string("0.0.0.0"));
+    EXPECT_TRUE(context, STManagerCli::runtime_display_host("0.0.0.0", "0.0.0.0") != "127.0.0.1");
+
+    return context.failed_assertions == 0;
+}
+
+bool test_runtime_display_host_ipv6_wildcard() {
+    TestContext context;
+
+    EXPECT_EQ(context, STManagerCli::runtime_display_host("::", "::"), std::string("::"));
 
     return context.failed_assertions == 0;
 }
@@ -513,6 +550,13 @@ int main() {
         {"manager_create_from_root_creates_device_id",
          test_manager_create_from_root_creates_device_id},
         {"is_connectable_host_rejects_wildcard", test_is_connectable_host_rejects_wildcard},
+        {"runtime_display_host_prefers_info_host_when_specific",
+         test_runtime_display_host_prefers_info_host_when_specific},
+        {"runtime_display_host_uses_bind_host_when_info_empty",
+         test_runtime_display_host_uses_bind_host_when_info_empty},
+        {"runtime_display_host_keeps_wildcard_not_localhost",
+         test_runtime_display_host_keeps_wildcard_not_localhost},
+        {"runtime_display_host_ipv6_wildcard", test_runtime_display_host_ipv6_wildcard},
         {"select_pair_device_prompts_for_single_candidate",
          test_select_pair_device_prompts_for_single_candidate},
         {"select_pair_device_rejects_invalid_selection",
