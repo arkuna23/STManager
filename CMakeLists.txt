@@ -184,6 +184,7 @@ endif()
 set(STMANAGER_BUNDLE_DIR "${CMAKE_CURRENT_BINARY_DIR}/artifact/stmanager")
 set(STMANAGER_BUNDLE_INCLUDE_DIR "${STMANAGER_BUNDLE_DIR}/include/STManager")
 set(STMANAGER_BUNDLE_LIB_DIR "${STMANAGER_BUNDLE_DIR}/lib")
+set(STMANAGER_BUNDLE_BIN_DIR "${STMANAGER_BUNDLE_DIR}/bin")
 
 if(STMANAGER_BUILD_SHARED)
     add_custom_target(stmanager_bundle ALL
@@ -247,6 +248,13 @@ if(STMANAGER_BUILD_CLI)
     endif()
     target_compile_features(stmanager PRIVATE cxx_std_11)
     target_include_directories(stmanager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli)
+    add_dependencies(stmanager stmanager_bundle)
+    add_custom_command(TARGET stmanager POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${STMANAGER_BUNDLE_BIN_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:stmanager>"
+            "${STMANAGER_BUNDLE_BIN_DIR}/"
+    )
 
     if(STMANAGER_CLI_STATIC_LINK_ACTIVE)
         if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

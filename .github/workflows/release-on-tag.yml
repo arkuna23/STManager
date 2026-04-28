@@ -12,6 +12,59 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            gcc-mingw-w64-x86-64 \
+            g++-mingw-w64-x86-64
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$GITHUB_WORKSPACE/vcpkg"
+          "$GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.sh"
+
+      - name: Build Linux release bundle
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: |
+          cmake --preset linux-release-static
+          cmake --build --preset linux-release-static -j
+          cd build/linux-release-static/artifact
+          cmake -E tar czf "$GITHUB_WORKSPACE/stmanager-linux-release-static.tar.gz" stmanager
+
+      - name: Build Windows x64 release bundle
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: |
+          cmake --preset linux-cross-windows-x64-release
+          cmake --build --preset linux-cross-windows-x64-release -j
+          cd build/linux-cross-windows-x64-release/artifact
+          cmake -E tar czf "$GITHUB_WORKSPACE/stmanager-windows-x64-release.tar.gz" stmanager
+
+      - name: Build Android arm64 release bundle
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: |
+          cmake --preset linux-cross-android-arm64-release
+          cmake --build --preset linux-cross-android-arm64-release -j
+          cd build/linux-cross-android-arm64-release/artifact
+          cmake -E tar czf "$GITHUB_WORKSPACE/stmanager-android-arm64-release.tar.gz" stmanager
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -19,3 +72,7 @@ jobs:
           name: ${{ github.ref_name }}
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            stmanager-linux-release-static.tar.gz
+            stmanager-windows-x64-release.tar.gz
+            stmanager-android-arm64-release.tar.gz

@@ -117,8 +117,7 @@ jobs:
         with:
           name: linux-cross-windows-x64-release
           path: |
-            build/linux-cross-windows-x64-release/stmanager.exe
-            build/linux-cross-windows-x64-release/libSTManager*
+            build/linux-cross-windows-x64-release/artifact/stmanager/**
           if-no-files-found: warn
 
   linux-cross-android-arm64:
@@ -161,6 +160,5 @@ jobs:
         with:
           name: linux-cross-android-arm64-release
           path: |
-            build/linux-cross-android-arm64-release/libSTManager*
-            build/linux-cross-android-arm64-release/libSTManagerStatic.a
+            build/linux-cross-android-arm64-release/artifact/stmanager/**
           if-no-files-found: warn
