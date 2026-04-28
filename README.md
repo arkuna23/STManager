@@ -70,7 +70,8 @@ cmake --build --preset linux-cross-windows-x64-release -j
 
 ### Linux -> Android Cross Build (Library Only)
 
-Set `ANDROID_NDK_HOME` before configure:
+Set `ANDROID_NDK_HOME` before configure. CI uses NDK `29.0.14206865`,
+which is also the recommended version for the Android x86_64 OpenSSL build:
 
 ```bash
 cmake --preset linux-cross-android-arm64-release
