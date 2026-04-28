@@ -40,11 +40,8 @@ bool parse_bool_value(const std::string& value, bool* output) {
     return false;
 }
 
-bool parse_serve_backup_args(
-    int argc,
-    char** argv,
-    ParsedArgs* parsed_args,
-    std::string* error_message) {
+bool parse_serve_backup_args(int argc, char** argv, ParsedArgs* parsed_args,
+                             std::string* error_message) {
     ServeBackupArgs args;
 
     for (int index = 3; index < argc; ++index) {
@@ -93,11 +90,8 @@ bool parse_serve_backup_args(
     return true;
 }
 
-bool parse_pair_restore_args(
-    int argc,
-    char** argv,
-    ParsedArgs* parsed_args,
-    std::string* error_message) {
+bool parse_pair_restore_args(int argc, char** argv, ParsedArgs* parsed_args,
+                             std::string* error_message) {
     PairRestoreArgs args;
 
     for (int index = 3; index < argc; ++index) {
@@ -147,11 +141,8 @@ bool parse_pair_restore_args(
     return true;
 }
 
-bool parse_export_backup_args(
-    int argc,
-    char** argv,
-    ParsedArgs* parsed_args,
-    std::string* error_message) {
+bool parse_export_backup_args(int argc, char** argv, ParsedArgs* parsed_args,
+                              std::string* error_message) {
     ExportBackupArgs args;
 
     for (int index = 3; index < argc; ++index) {
@@ -182,11 +173,8 @@ bool parse_export_backup_args(
     return true;
 }
 
-bool parse_restore_backup_args(
-    int argc,
-    char** argv,
-    ParsedArgs* parsed_args,
-    std::string* error_message) {
+bool parse_restore_backup_args(int argc, char** argv, ParsedArgs* parsed_args,
+                               std::string* error_message) {
     RestoreBackupArgs args;
 
     for (int index = 3; index < argc; ++index) {
@@ -213,6 +201,38 @@ bool parse_restore_backup_args(
     return true;
 }
 
+bool parse_update_sillytavern_args(int argc, char** argv, ParsedArgs* parsed_args,
+                                   std::string* error_message) {
+    UpdateSillyTavernArgs args;
+
+    for (int index = 2; index < argc; ++index) {
+        const std::string flag = argv[index];
+        if (flag == "--help" || flag == "-h") {
+            parsed_args->command_type = CommandType::kHelp;
+            return true;
+        }
+        if (flag == "--root" && index + 1 < argc) {
+            args.root_path = argv[++index];
+            continue;
+        }
+        if (flag == "--repo" && index + 1 < argc) {
+            args.repository = argv[++index];
+            continue;
+        }
+        if (flag == "--cache-dir" && index + 1 < argc) {
+            args.cache_dir = argv[++index];
+            continue;
+        }
+
+        *error_message = "Unknown update argument: " + flag;
+        return false;
+    }
+
+    parsed_args->command_type = CommandType::kUpdateSillyTavern;
+    parsed_args->update_sillytavern_args = args;
+    return true;
+}
+
 }  // namespace
 
 bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string* error_message) {
@@ -229,9 +249,14 @@ bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string*
         parsed_args->command_type = CommandType::kHelp;
         return true;
     }
-    if (command != "serve" && command != "pair" && command != "export" && command != "restore") {
+    if (command != "serve" && command != "pair" && command != "export" && command != "restore" &&
+        command != "update") {
         *error_message = "Unknown command: " + command;
         return false;
+    }
+
+    if (command == "update") {
+        return parse_update_sillytavern_args(argc, argv, parsed_args, error_message);
     }
 
     if (argc < 3) {
@@ -296,10 +321,12 @@ std::string build_help_text() {
            "[--dest-root <path>]\n";
     out << "  stmanager export backup [--root <path>] [--file <path>] [--git-mode]\n";
     out << "  stmanager restore backup [--root <path>] [--file <path>]\n";
+    out << "  stmanager update [--root <path>] [--repo <owner/repo>] [--cache-dir <path>]\n";
     out << "\nDefaults:\n";
     out << "  serve backup --port defaults to " << kDefaultSyncPort << "\n";
     out << "  pair restore with --host but no --port uses " << kDefaultSyncPort << "\n";
     out << "  export/restore backup --file defaults to " << kDefaultBackupFilePath << "\n";
+    out << "  update --repo defaults to arkuna23/SillyTavernRaze\n";
     out << "\nTip:\n";
     out << "  Run `stmanager` with no arguments to open interactive action menu.\n";
     return out.str();

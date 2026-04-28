@@ -34,6 +34,7 @@ set(STMANAGER_SOURCES
     src/locate.cpp
     src/path_safety.cpp
     src/platform_compat.cpp
+    src/raze_update.cpp
     src/sync.cpp
     src/sync_server.cpp
     src/sync_protocol.cpp
@@ -72,6 +73,7 @@ if(ANDROID)
 endif()
 
 find_package(LibArchive REQUIRED)
+find_package(CURL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -92,9 +94,9 @@ else()
 endif()
 
 if(STMANAGER_BUILD_SHARED)
-    target_link_libraries(STManager PRIVATE nlohmann_json::nlohmann_json)
+    target_link_libraries(STManager PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 endif()
-target_link_libraries(STManagerStatic PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(STManagerStatic PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 
 if(WIN32)
     if(STMANAGER_BUILD_SHARED)

@@ -120,8 +120,18 @@ jobs:
             build/linux-cross-windows-x64-release/artifact/stmanager/**
           if-no-files-found: warn
 
-  linux-cross-android-arm64:
+  linux-cross-android:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64
+            preset: linux-cross-android-arm64-release
+          - abi: armeabi-v7a
+            preset: linux-cross-android-armeabi-v7a-release
+          - abi: x86_64
+            preset: linux-cross-android-x86_64-release
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -147,18 +157,18 @@ jobs:
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        run: cmake --preset linux-cross-android-arm64-release
+        run: cmake --preset ${{ matrix.preset }}
 
       - name: Build
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        run: cmake --build --preset linux-cross-android-arm64-release -j
+        run: cmake --build --preset ${{ matrix.preset }} -j
 
-      - name: Upload Android arm64 artifact
+      - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-cross-android-arm64-release
+          name: ${{ matrix.preset }}
           path: |
-            build/linux-cross-android-arm64-release/artifact/stmanager/**
+            build/${{ matrix.preset }}/artifact/stmanager/**
           if-no-files-found: warn

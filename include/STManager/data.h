@@ -20,6 +20,9 @@ enum class StatusCode {
     kDiscoveryError,
     kSyncProtocolError,
     kUnauthorized,
+    kInvalidManifest,
+    kNetworkError,
+    kHashMismatch,
 };
 
 /** Result code and human-readable diagnostic returned by all public APIs. */
@@ -102,10 +105,8 @@ public:
      *
      * Restore is full replacement for managed data and third-party extensions.
      */
-    Status restore(
-        std::istream& in,
-        const std::string& destination_root,
-        const RestoreOptions& options) const;
+    Status restore(std::istream& in, const std::string& destination_root,
+                   const RestoreOptions& options) const;
 
 private:
     Status status_;

@@ -17,7 +17,7 @@ bool parse_selection(const std::string& input, int* selected_value) {
     if (end_ptr == input.c_str() || *end_ptr != '\0') {
         return false;
     }
-    if (parsed_value < 1 || parsed_value > 4) {
+    if (parsed_value < 1 || parsed_value > 5) {
         return false;
     }
 
@@ -27,11 +27,8 @@ bool parse_selection(const std::string& input, int* selected_value) {
 
 }  // namespace
 
-bool select_action(
-    std::istream& input_stream,
-    std::ostream& output_stream,
-    std::string* error_message,
-    CommandType* command_type) {
+bool select_action(std::istream& input_stream, std::ostream& output_stream,
+                   std::string* error_message, CommandType* command_type) {
     if (error_message == NULL || command_type == NULL) {
         return false;
     }
@@ -41,7 +38,8 @@ bool select_action(
     output_stream << "  [2] pair restore\n";
     output_stream << "  [3] export backup\n";
     output_stream << "  [4] restore backup\n";
-    output_stream << "Select action [1-4]: ";
+    output_stream << "  [5] update SillyTavern\n";
+    output_stream << "Select action [1-5]: ";
 
     std::string input;
     if (!std::getline(input_stream, input)) {
@@ -51,7 +49,7 @@ bool select_action(
 
     int selected_value = 0;
     if (!parse_selection(input, &selected_value)) {
-        *error_message = "Invalid action selection. Please enter 1 to 4.";
+        *error_message = "Invalid action selection. Please enter 1 to 5.";
         return false;
     }
 
@@ -61,8 +59,10 @@ bool select_action(
         *command_type = CommandType::kPairRestore;
     } else if (selected_value == 3) {
         *command_type = CommandType::kExportBackup;
-    } else {
+    } else if (selected_value == 4) {
         *command_type = CommandType::kRestoreBackup;
+    } else {
+        *command_type = CommandType::kUpdateSillyTavern;
     }
 
     return true;

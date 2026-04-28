@@ -9,6 +9,7 @@
         "zstd"
       ]
     },
+    "curl",
     "nlohmann-json"
   ]
 }

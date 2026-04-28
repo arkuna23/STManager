@@ -1,4 +1,5 @@
 #include <STManager/manager.h>
+#include <STManager/raze_update.h>
 
 #include <atomic>
 #include <chrono>
@@ -14,6 +15,12 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
 #ifdef _WIN32
 // clang-format off
@@ -297,6 +304,28 @@ bool is_help_option_token(const char* token) {
     return token_string == "--help" || token_string == "-h" || token_string == "help";
 }
 
+std::string join_path(const std::string& lhs, const std::string& rhs) {
+    if (lhs.empty()) {
+        return rhs;
+    }
+    if (lhs[lhs.size() - 1] == '/') {
+        return lhs + rhs;
+    }
+    return lhs + "/" + rhs;
+}
+
+std::string current_working_directory() {
+    char cwd_buffer[4096];
+#ifdef _WIN32
+    if (_getcwd(cwd_buffer, sizeof(cwd_buffer)) == NULL) {
+#else
+    if (getcwd(cwd_buffer, sizeof(cwd_buffer)) == NULL) {
+#endif
+        return std::string(".");
+    }
+    return cwd_buffer;
+}
+
 bool action_to_tokens(STManagerCli::CommandType command_type, std::string* command_token,
                       std::string* action_token) {
     if (command_token == NULL || action_token == NULL) {
@@ -323,6 +352,11 @@ bool action_to_tokens(STManagerCli::CommandType command_type, std::string* comma
         *action_token = "backup";
         return true;
     }
+    if (command_type == STManagerCli::CommandType::kUpdateSillyTavern) {
+        *command_token = "update";
+        action_token->clear();
+        return true;
+    }
 
     return false;
 }
@@ -340,7 +374,9 @@ bool parse_with_selected_action(int argc, char** argv, STManagerCli::CommandType
     reconstructed_args.reserve(static_cast<size_t>(argc) + 2);
     reconstructed_args.push_back("stmanager");
     reconstructed_args.push_back(command_token);
-    reconstructed_args.push_back(action_token);
+    if (!action_token.empty()) {
+        reconstructed_args.push_back(action_token);
+    }
 
     for (int index = 1; index < argc; ++index) {
         reconstructed_args.push_back(argv[index]);
@@ -602,6 +638,137 @@ int restore_backup_command(const STManagerCli::RestoreBackupArgs& args) {
     return 0;
 }
 
+bool resolve_update_root(const STManagerCli::UpdateSillyTavernArgs& args, std::string* root_path) {
+    if (root_path == NULL) {
+        return false;
+    }
+
+    if (!args.root_path.empty()) {
+        *root_path = args.root_path;
+        return true;
+    }
+
+    std::string detected_root;
+    std::string detect_error;
+    if (STManagerCli::detect_sillytavern_root("", &detected_root, &detect_error)) {
+        *root_path = detected_root;
+        return true;
+    }
+
+    *root_path = join_path(current_working_directory(), "SillyTavern");
+    return true;
+}
+
+int update_sillytavern_command(const STManagerCli::UpdateSillyTavernArgs& args) {
+    std::string root_path;
+    if (!resolve_update_root(args, &root_path)) {
+        std::cerr << "Error: failed resolving update root\n";
+        return 1;
+    }
+
+    STManager::RazeUpdateOptions options;
+    options.root_path = root_path;
+    options.repository = args.repository;
+    options.cache_dir = args.cache_dir.empty()
+                            ? join_path(join_path(root_path, ".stmanager"), "raze-cache")
+                            : args.cache_dir;
+
+    STManager::RazeReleaseInfo release_info;
+    const STManager::Status release_status =
+        STManager::fetch_latest_raze_release(options, &release_info);
+    if (!release_status.ok()) {
+        print_status_error(release_status);
+        return 1;
+    }
+
+    STManager::RazeVersionManifest remote_manifest;
+    const STManager::Status remote_status =
+        STManager::download_raze_version_manifest(release_info, &remote_manifest);
+    if (!remote_status.ok()) {
+        print_status_error(remote_status);
+        return 1;
+    }
+
+    bool has_local_manifest = false;
+    STManager::RazeVersionManifest local_manifest;
+    const STManager::Status local_status = STManager::read_local_raze_version_manifest(
+        root_path, &has_local_manifest, &local_manifest);
+    if (!local_status.ok()) {
+        print_status_error(local_status);
+        return 1;
+    }
+
+    std::vector<STManager::RazePackageUpdate> package_updates;
+    const STManager::Status plan_status = STManager::plan_raze_package_updates(
+        remote_manifest, has_local_manifest, local_manifest, release_info, &package_updates);
+    if (!plan_status.ok()) {
+        print_status_error(plan_status);
+        return 1;
+    }
+
+    STManager::RazeUpdateResult result;
+    result.local_version = has_local_manifest ? local_manifest.version : std::string();
+    result.remote_version = remote_manifest.version;
+    result.initialized = !has_local_manifest;
+    result.package_updates = package_updates;
+
+    std::cout << "SillyTavern root: " << root_path << "\n";
+    std::cout << "Release: " << release_info.tag_name << "\n";
+    std::cout << "Remote version: " << remote_manifest.version << "\n";
+    if (has_local_manifest) {
+        std::cout << "Local version: " << local_manifest.version << "\n";
+    } else {
+        std::cout << "Local version: <missing, initializing>\n";
+    }
+
+    for (std::vector<STManager::RazePackageUpdate>::const_iterator it = package_updates.begin();
+         it != package_updates.end(); ++it) {
+        if (!it->needs_download) {
+            ++result.skipped_count;
+            std::cout << "Skip " << it->name << " (" << it->reason << ")\n";
+            continue;
+        }
+
+        const std::string package_path = join_path(options.cache_dir, it->file);
+        std::cout << "Download " << it->name << " -> " << package_path << "\n";
+        const STManager::Status download_status =
+            STManager::download_raze_package(it->download_url, package_path);
+        if (!download_status.ok()) {
+            print_status_error(download_status);
+            return 1;
+        }
+
+        const STManager::Status verify_status = STManager::verify_raze_package_file(
+            package_path, remote_manifest.hash_algorithm, it->remote_hash);
+        if (!verify_status.ok()) {
+            print_status_error(verify_status);
+            return 1;
+        }
+
+        std::cout << "Extract " << it->name << "\n";
+        const STManager::Status extract_status =
+            STManager::extract_raze_package(package_path, root_path);
+        if (!extract_status.ok()) {
+            print_status_error(extract_status);
+            return 1;
+        }
+
+        ++result.downloaded_count;
+    }
+
+    const STManager::Status write_status =
+        STManager::write_local_raze_version_manifest(root_path, remote_manifest);
+    if (!write_status.ok()) {
+        print_status_error(write_status);
+        return 1;
+    }
+
+    std::cout << "Updated version.json\n";
+    std::cout << "Downloaded packages: " << result.downloaded_count << "\n";
+    std::cout << "Skipped packages: " << result.skipped_count << "\n";
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -653,6 +820,9 @@ int main(int argc, char** argv) {
     if (parsed_args.command_type == STManagerCli::CommandType::kRestoreBackup) {
         set_last_stage("main.dispatch.restore");
         return restore_backup_command(parsed_args.restore_backup_args);
+    }
+    if (parsed_args.command_type == STManagerCli::CommandType::kUpdateSillyTavern) {
+        return update_sillytavern_command(parsed_args.update_sillytavern_args);
     }
 
     std::cerr << STManagerCli::build_help_text() << "\n";

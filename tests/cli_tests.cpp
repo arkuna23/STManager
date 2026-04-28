@@ -187,6 +187,51 @@ bool test_parse_restore_backup_defaults() {
     return context.failed_assertions == 0;
 }
 
+bool test_parse_update_sillytavern_defaults() {
+    TestContext context;
+
+    char command_0[] = "stmanager";
+    char command_1[] = "update";
+    char* argv[] = {command_0, command_1};
+
+    STManagerCli::ParsedArgs parsed_args;
+    std::string error_message;
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(2, argv, &parsed_args, &error_message));
+    EXPECT_EQ(context, static_cast<int>(parsed_args.command_type),
+              static_cast<int>(STManagerCli::CommandType::kUpdateSillyTavern));
+    EXPECT_TRUE(context, parsed_args.update_sillytavern_args.root_path.empty());
+    EXPECT_TRUE(context, parsed_args.update_sillytavern_args.repository.empty());
+    EXPECT_TRUE(context, parsed_args.update_sillytavern_args.cache_dir.empty());
+
+    return context.failed_assertions == 0;
+}
+
+bool test_parse_update_sillytavern_options() {
+    TestContext context;
+
+    char command_0[] = "stmanager";
+    char command_1[] = "update";
+    char command_2[] = "--root";
+    char command_3[] = "SillyTavern";
+    char command_4[] = "--repo";
+    char command_5[] = "owner/repo";
+    char command_6[] = "--cache-dir";
+    char command_7[] = "cache";
+    char* argv[] = {command_0, command_1, command_2, command_3,
+                    command_4, command_5, command_6, command_7};
+
+    STManagerCli::ParsedArgs parsed_args;
+    std::string error_message;
+    EXPECT_TRUE(context, STManagerCli::parse_cli_args(8, argv, &parsed_args, &error_message));
+    EXPECT_EQ(context, static_cast<int>(parsed_args.command_type),
+              static_cast<int>(STManagerCli::CommandType::kUpdateSillyTavern));
+    EXPECT_EQ(context, parsed_args.update_sillytavern_args.root_path, std::string("SillyTavern"));
+    EXPECT_EQ(context, parsed_args.update_sillytavern_args.repository, std::string("owner/repo"));
+    EXPECT_EQ(context, parsed_args.update_sillytavern_args.cache_dir, std::string("cache"));
+
+    return context.failed_assertions == 0;
+}
+
 bool test_parse_help_options() {
     TestContext context;
 
@@ -228,6 +273,8 @@ bool test_help_text_mentions_device_name_options() {
     const std::string help_text = STManagerCli::build_help_text();
     EXPECT_TRUE(context, help_text.find("serve backup") != std::string::npos);
     EXPECT_TRUE(context, help_text.find("pair restore") != std::string::npos);
+    EXPECT_TRUE(context, help_text.find("stmanager update") != std::string::npos);
+    EXPECT_TRUE(context, help_text.find("update sillytavern") == std::string::npos);
     EXPECT_TRUE(context, help_text.find("--device-name <name>") != std::string::npos);
 
     return context.failed_assertions == 0;
@@ -482,7 +529,7 @@ bool test_select_action_serve_backup() {
               static_cast<int>(STManagerCli::CommandType::kServeBackup));
     EXPECT_TRUE(context, output_stream.str().find("Select action:\n") != std::string::npos);
     EXPECT_TRUE(context, output_stream.str().find("  [1] serve backup\n") != std::string::npos);
-    EXPECT_TRUE(context, output_stream.str().find("Select action [1-4]: ") != std::string::npos);
+    EXPECT_TRUE(context, output_stream.str().find("Select action [1-5]: ") != std::string::npos);
 
     return context.failed_assertions == 0;
 }
@@ -506,6 +553,25 @@ bool test_select_action_restore_backup() {
     return context.failed_assertions == 0;
 }
 
+bool test_select_action_update_sillytavern() {
+    TestContext context;
+
+    std::istringstream input_stream("5\n");
+    std::ostringstream output_stream;
+    std::string error_message;
+    STManagerCli::CommandType command_type = STManagerCli::CommandType::kUnknown;
+
+    const bool selected =
+        STManagerCli::select_action(input_stream, output_stream, &error_message, &command_type);
+
+    EXPECT_TRUE(context, selected);
+    EXPECT_TRUE(context, error_message.empty());
+    EXPECT_EQ(context, static_cast<int>(command_type),
+              static_cast<int>(STManagerCli::CommandType::kUpdateSillyTavern));
+
+    return context.failed_assertions == 0;
+}
+
 bool test_select_action_rejects_invalid_input() {
     TestContext context;
 
@@ -518,7 +584,7 @@ bool test_select_action_rejects_invalid_input() {
         STManagerCli::select_action(input_stream, output_stream, &error_message, &command_type);
 
     EXPECT_TRUE(context, !selected);
-    EXPECT_TRUE(context, error_message == "Invalid action selection. Please enter 1 to 4.");
+    EXPECT_TRUE(context, error_message == "Invalid action selection. Please enter 1 to 5.");
     EXPECT_EQ(context, static_cast<int>(command_type),
               static_cast<int>(STManagerCli::CommandType::kUnknown));
 
@@ -541,6 +607,8 @@ int main() {
         {"parse_pair_restore_device_name", test_parse_pair_restore_device_name},
         {"parse_export_backup_defaults", test_parse_export_backup_defaults},
         {"parse_restore_backup_defaults", test_parse_restore_backup_defaults},
+        {"parse_update_sillytavern_defaults", test_parse_update_sillytavern_defaults},
+        {"parse_update_sillytavern_options", test_parse_update_sillytavern_options},
         {"parse_help_options", test_parse_help_options},
         {"help_text_mentions_device_name_options", test_help_text_mentions_device_name_options},
         {"parse_serve_without_action_fails", test_parse_serve_without_action_fails},
@@ -567,6 +635,7 @@ int main() {
          test_select_pair_device_rejects_unconnectable_endpoint},
         {"select_action_serve_backup", test_select_action_serve_backup},
         {"select_action_restore_backup", test_select_action_restore_backup},
+        {"select_action_update_sillytavern", test_select_action_update_sillytavern},
         {"select_action_rejects_invalid_input", test_select_action_rejects_invalid_input},
     };
 

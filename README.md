@@ -7,6 +7,7 @@ It provides:
 - Backup/restore using streaming `tar + zstd`
 - Local backup archive export/import (`.tar.zst`)
 - Device sync primitives (pairing, trust store, pull sync)
+- SillyTavernRaze release install/update from `version.json`
 - A CLI binary (`stmanager`) for simple cross-device sync
 
 ## Project Layout
@@ -20,6 +21,7 @@ It provides:
 
 Managed by `vcpkg.json`:
 - `libarchive`
+- `curl`
 - `nlohmann-json`
 
 ## Build
@@ -66,16 +68,22 @@ cmake --preset linux-cross-windows-x64-release
 cmake --build --preset linux-cross-windows-x64-release -j
 ```
 
-### Linux -> Android arm64 Cross Build (Library Only)
+### Linux -> Android Cross Build (Library Only)
 
 Set `ANDROID_NDK_HOME` before configure:
 
 ```bash
 cmake --preset linux-cross-android-arm64-release
 cmake --build --preset linux-cross-android-arm64-release -j
+
+cmake --preset linux-cross-android-armeabi-v7a-release
+cmake --build --preset linux-cross-android-armeabi-v7a-release -j
+
+cmake --preset linux-cross-android-x86_64-release
+cmake --build --preset linux-cross-android-x86_64-release -j
 ```
 
-Android preset intentionally disables CLI/tests:
+Android presets intentionally disable CLI/tests:
 - `STMANAGER_BUILD_CLI=OFF`
 - `STMANAGER_BUILD_TESTS=OFF`
 - `STMANAGER_BUILD_SHARED=ON` (build shared library target for Android)
@@ -106,7 +114,8 @@ Release defaults for `stmanager`:
   - `cmake/triplets/x64-linux-static.cmake`
   - `cmake/triplets/x64-mingw-static.cmake`
 
-Android preset uses vcpkg built-in triplet `arm64-android` with NDK chainload toolchain.
+Android presets use vcpkg Android triplets with the NDK chainload toolchain:
+`arm64-android`, `arm-neon-android`, and `x64-android`.
 
 Optional overrides:
 
@@ -183,6 +192,22 @@ Optional flags:
 
 Optional flags:
 - `--file <path>` defaults to `st-backup.tar.zst`
+
+### Install or update SillyTavernRaze
+
+```bash
+./build/linux-release-static/stmanager update \
+  --root /path/to/SillyTavern
+```
+
+Optional flags:
+- `--root <path>` defaults to auto-detect, then `./SillyTavern` for initialization
+- `--repo <owner/repo>` defaults to `arkuna23/SillyTavernRaze`
+- `--cache-dir <path>` defaults to `<root>/.stmanager/raze-cache`
+
+The updater reads the latest non-draft GitHub release, downloads `version.json`,
+compares package hashes, downloads only changed packages, verifies SHA-256, extracts
+them into the root, and then writes the new local `version.json`.
 
 ## Library Quick Start
 

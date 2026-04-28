@@ -1,5 +1,6 @@
 #include <STManager/data.h>
 #include <STManager/manager.h>
+#include <STManager/raze_update.h>
 #include <STManager/sync.h>
 #include <archive.h>
 #include <archive_entry.h>
@@ -36,6 +37,9 @@ using STManager::PairingOptions;
 using STManager::PairSyncOptions;
 using STManager::PairSyncRequest;
 using STManager::PairSyncResult;
+using STManager::RazePackageUpdate;
+using STManager::RazeReleaseInfo;
+using STManager::RazeVersionManifest;
 using STManager::RestoreBackupOptions;
 using STManager::Status;
 using STManager::StatusCode;
@@ -803,6 +807,170 @@ bool test_restore_to_sillytavern_layout_replaces_public_extensions() {
     return context.failed_assertions == 0;
 }
 
+std::string sample_raze_manifest_json(const std::string& server_hash, const std::string& web_hash) {
+    return std::string("{") + "\"version\":\"v1.0.0\"," + "\"hashAlgorithm\":\"sha256\"," +
+           "\"packages\":{" + "\"server\":{\"file\":\"server.zip\",\"hash\":\"" + server_hash +
+           "\"}," + "\"webpage\":{\"file\":\"webpage.zip\",\"hash\":\"" + web_hash + "\"}" + "}}";
+}
+
+bool test_raze_manifest_parse_success() {
+    TestContext context;
+
+    RazeVersionManifest manifest;
+    const Status parse_status = STManager::parse_raze_version_manifest(
+        sample_raze_manifest_json("aaaaaaaa", "bbbbbbbb"), &manifest);
+    EXPECT_STATUS_OK(context, parse_status);
+    EXPECT_EQ(context, manifest.version, std::string("v1.0.0"));
+    EXPECT_EQ(context, manifest.hash_algorithm, std::string("sha256"));
+    EXPECT_EQ(context, manifest.packages.size(), static_cast<size_t>(2));
+    EXPECT_EQ(context, manifest.packages["server"].file, std::string("server.zip"));
+    EXPECT_EQ(context, manifest.packages["webpage"].hash, std::string("bbbbbbbb"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_raze_manifest_rejects_unsupported_hash_algorithm() {
+    TestContext context;
+
+    RazeVersionManifest manifest;
+    const Status parse_status = STManager::parse_raze_version_manifest(
+        std::string("{\"version\":\"v1\",\"hashAlgorithm\":\"md5\",\"packages\":{") +
+            "\"server\":{\"file\":\"server.zip\",\"hash\":\"abc\"}}}",
+        &manifest);
+    EXPECT_TRUE(context, !parse_status.ok());
+    EXPECT_EQ(context, static_cast<int>(parse_status.code),
+              static_cast<int>(StatusCode::kInvalidManifest));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_raze_plan_initial_install_downloads_all_packages() {
+    TestContext context;
+
+    RazeVersionManifest remote_manifest;
+    EXPECT_STATUS_OK(context,
+                     STManager::parse_raze_version_manifest(
+                         sample_raze_manifest_json("aaaaaaaa", "bbbbbbbb"), &remote_manifest));
+
+    RazeReleaseInfo release_info;
+    release_info.asset_download_urls["server.zip"] = "https://example.com/server.zip";
+    release_info.asset_download_urls["webpage.zip"] = "https://example.com/webpage.zip";
+
+    RazeVersionManifest local_manifest;
+    std::vector<RazePackageUpdate> updates;
+    EXPECT_STATUS_OK(context, STManager::plan_raze_package_updates(
+                                  remote_manifest, false, local_manifest, release_info, &updates));
+
+    EXPECT_EQ(context, updates.size(), static_cast<size_t>(2));
+    EXPECT_TRUE(context, updates[0].needs_download);
+    EXPECT_TRUE(context, updates[1].needs_download);
+
+    return context.failed_assertions == 0;
+}
+
+bool test_raze_plan_downloads_only_changed_packages() {
+    TestContext context;
+
+    RazeVersionManifest remote_manifest;
+    EXPECT_STATUS_OK(context,
+                     STManager::parse_raze_version_manifest(
+                         sample_raze_manifest_json("remote-server", "same-web"), &remote_manifest));
+
+    RazeVersionManifest local_manifest;
+    EXPECT_STATUS_OK(context,
+                     STManager::parse_raze_version_manifest(
+                         sample_raze_manifest_json("local-server", "same-web"), &local_manifest));
+
+    RazeReleaseInfo release_info;
+    release_info.asset_download_urls["server.zip"] = "https://example.com/server.zip";
+    release_info.asset_download_urls["webpage.zip"] = "https://example.com/webpage.zip";
+
+    std::vector<RazePackageUpdate> updates;
+    EXPECT_STATUS_OK(context, STManager::plan_raze_package_updates(
+                                  remote_manifest, true, local_manifest, release_info, &updates));
+
+    size_t changed_count = 0;
+    size_t skipped_count = 0;
+    for (std::vector<RazePackageUpdate>::const_iterator it = updates.begin(); it != updates.end();
+         ++it) {
+        if (it->needs_download) {
+            ++changed_count;
+            EXPECT_EQ(context, it->name, std::string("server"));
+        } else {
+            ++skipped_count;
+            EXPECT_EQ(context, it->name, std::string("webpage"));
+        }
+    }
+    EXPECT_EQ(context, changed_count, static_cast<size_t>(1));
+    EXPECT_EQ(context, skipped_count, static_cast<size_t>(1));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_raze_compute_sha256_and_verify_package() {
+    TestContext context;
+
+    const std::string temp_dir = STManagerTest::create_temp_directory("raze-sha256");
+    TempDirGuard temp_guard(temp_dir);
+    const std::string file_path = STManagerTest::join_path(temp_dir, "payload.txt");
+    EXPECT_TRUE(context, STManagerTest::write_file(file_path, "abc"));
+
+    std::string hash_hex;
+    EXPECT_STATUS_OK(context, STManager::compute_file_sha256(file_path, &hash_hex));
+    EXPECT_EQ(context, hash_hex,
+              std::string("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+    EXPECT_STATUS_OK(context, STManager::verify_raze_package_file(file_path, "sha256", hash_hex));
+
+    const Status mismatch_status =
+        STManager::verify_raze_package_file(file_path, "sha256", "deadbeef");
+    EXPECT_TRUE(context, !mismatch_status.ok());
+    EXPECT_EQ(context, static_cast<int>(mismatch_status.code),
+              static_cast<int>(StatusCode::kHashMismatch));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_raze_extract_package_to_root() {
+    TestContext context;
+
+    const std::string temp_dir = STManagerTest::create_temp_directory("raze-extract");
+    TempDirGuard temp_guard(temp_dir);
+    const std::string root_path = STManagerTest::join_path(temp_dir, "SillyTavern");
+    const std::string archive_path = STManagerTest::join_path(temp_dir, "package.tar.zst");
+    const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {"server.js", "console.log('server');"},
+        {"public/index.html", "<html></html>"},
+    });
+    EXPECT_TRUE(context, STManagerTest::write_file(archive_path, archive_bytes));
+
+    EXPECT_STATUS_OK(context, STManager::extract_raze_package(archive_path, root_path));
+    EXPECT_EQ(context, STManagerTest::read_file(STManagerTest::join_path(root_path, "server.js")),
+              std::string("console.log('server');"));
+    EXPECT_EQ(context,
+              STManagerTest::read_file(STManagerTest::join_path(root_path, "public/index.html")),
+              std::string("<html></html>"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_raze_extract_rejects_traversal_entry() {
+    TestContext context;
+
+    const std::string temp_dir = STManagerTest::create_temp_directory("raze-extract-traversal");
+    TempDirGuard temp_guard(temp_dir);
+    const std::string root_path = STManagerTest::join_path(temp_dir, "SillyTavern");
+    const std::string archive_path = STManagerTest::join_path(temp_dir, "package.tar.zst");
+    const std::string archive_bytes = create_malicious_archive_file();
+    EXPECT_TRUE(context, STManagerTest::write_file(archive_path, archive_bytes));
+
+    const Status extract_status = STManager::extract_raze_package(archive_path, root_path);
+    EXPECT_TRUE(context, !extract_status.ok());
+    EXPECT_EQ(context, static_cast<int>(extract_status.code),
+              static_cast<int>(StatusCode::kInvalidArchiveEntry));
+
+    return context.failed_assertions == 0;
+}
+
 bool test_sync_push_requires_trusted_device() {
     TestContext context;
 
@@ -1484,8 +1652,6 @@ int main() {
          test_backup_git_mode_skips_git_extensions_and_writes_manifest},
 #ifndef _WIN32
         {"backup_with_non_ascii_path_succeeds", test_backup_with_non_ascii_path_succeeds},
-#endif
-#ifndef _WIN32
         {"backup_archive_stream_validates_successfully",
          test_backup_archive_stream_validates_successfully},
         {"backup_archive_with_nested_directories_validates_successfully",
@@ -1496,6 +1662,16 @@ int main() {
         {"restore_full_replace_removes_stale_files", test_restore_full_replace_removes_stale_files},
         {"restore_to_sillytavern_layout_replaces_public_extensions",
          test_restore_to_sillytavern_layout_replaces_public_extensions},
+        {"raze_manifest_parse_success", test_raze_manifest_parse_success},
+        {"raze_manifest_rejects_unsupported_hash_algorithm",
+         test_raze_manifest_rejects_unsupported_hash_algorithm},
+        {"raze_plan_initial_install_downloads_all_packages",
+         test_raze_plan_initial_install_downloads_all_packages},
+        {"raze_plan_downloads_only_changed_packages",
+         test_raze_plan_downloads_only_changed_packages},
+        {"raze_compute_sha256_and_verify_package", test_raze_compute_sha256_and_verify_package},
+        {"raze_extract_package_to_root", test_raze_extract_package_to_root},
+        {"raze_extract_rejects_traversal_entry", test_raze_extract_rejects_traversal_entry},
         {"sync_push_requires_trusted_device", test_sync_push_requires_trusted_device},
         {"sync_pair_then_push_success", test_sync_pair_then_push_success},
         {"sync_pull_restores_to_override_root", test_sync_pull_restores_to_override_root},

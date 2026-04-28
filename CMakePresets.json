@@ -120,6 +120,45 @@
         "STMANAGER_BUILD_CLI": "OFF",
         "STMANAGER_BUILD_TESTS": "OFF"
       }
+    },
+    {
+      "name": "linux-cross-android-armeabi-v7a-release",
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "VCPKG_TARGET_TRIPLET": "arm-neon-android",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+        "ANDROID_ABI": "armeabi-v7a",
+        "ANDROID_ARM_NEON": "ON",
+        "ANDROID_PLATFORM": "26",
+        "STMANAGER_BUILD_SHARED": "ON",
+        "STMANAGER_BUILD_CLI": "OFF",
+        "STMANAGER_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "linux-cross-android-x86_64-release",
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "VCPKG_TARGET_TRIPLET": "x64-android",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+        "ANDROID_ABI": "x86_64",
+        "ANDROID_PLATFORM": "26",
+        "STMANAGER_BUILD_SHARED": "ON",
+        "STMANAGER_BUILD_CLI": "OFF",
+        "STMANAGER_BUILD_TESTS": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -150,6 +189,14 @@
     {
       "name": "linux-cross-android-arm64-release",
       "configurePreset": "linux-cross-android-arm64-release"
+    },
+    {
+      "name": "linux-cross-android-armeabi-v7a-release",
+      "configurePreset": "linux-cross-android-armeabi-v7a-release"
+    },
+    {
+      "name": "linux-cross-android-x86_64-release",
+      "configurePreset": "linux-cross-android-x86_64-release"
     }
   ],
   "testPresets": [

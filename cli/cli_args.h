@@ -15,6 +15,7 @@ enum class CommandType {
     kPairRestore,
     kExportBackup,
     kRestoreBackup,
+    kUpdateSillyTavern,
 };
 
 struct ServeBackupArgs {
@@ -68,19 +69,29 @@ struct RestoreBackupArgs {
     RestoreBackupArgs() : root_path(), file_path(kDefaultBackupFilePath) {}
 };
 
+struct UpdateSillyTavernArgs {
+    std::string root_path;
+    std::string repository;
+    std::string cache_dir;
+
+    UpdateSillyTavernArgs() : root_path(), repository(), cache_dir() {}
+};
+
 struct ParsedArgs {
     CommandType command_type;
     ServeBackupArgs serve_backup_args;
     PairRestoreArgs pair_restore_args;
     ExportBackupArgs export_backup_args;
     RestoreBackupArgs restore_backup_args;
+    UpdateSillyTavernArgs update_sillytavern_args;
 
     ParsedArgs()
         : command_type(CommandType::kUnknown),
           serve_backup_args(),
           pair_restore_args(),
           export_backup_args(),
-          restore_backup_args() {}
+          restore_backup_args(),
+          update_sillytavern_args() {}
 };
 
 bool parse_cli_args(int argc, char** argv, ParsedArgs* parsed_args, std::string* error_message);

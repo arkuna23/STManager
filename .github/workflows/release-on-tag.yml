@@ -65,6 +65,26 @@ jobs:
           cd build/linux-cross-android-arm64-release/artifact
           cmake -E tar czf "$GITHUB_WORKSPACE/stmanager-android-arm64-release.tar.gz" stmanager
 
+      - name: Build Android armeabi-v7a release bundle
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: |
+          cmake --preset linux-cross-android-armeabi-v7a-release
+          cmake --build --preset linux-cross-android-armeabi-v7a-release -j
+          cd build/linux-cross-android-armeabi-v7a-release/artifact
+          cmake -E tar czf "$GITHUB_WORKSPACE/stmanager-android-armeabi-v7a-release.tar.gz" stmanager
+
+      - name: Build Android x86_64 release bundle
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: |
+          cmake --preset linux-cross-android-x86_64-release
+          cmake --build --preset linux-cross-android-x86_64-release -j
+          cd build/linux-cross-android-x86_64-release/artifact
+          cmake -E tar czf "$GITHUB_WORKSPACE/stmanager-android-x86_64-release.tar.gz" stmanager
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -76,3 +96,5 @@ jobs:
             stmanager-linux-release-static.tar.gz
             stmanager-windows-x64-release.tar.gz
             stmanager-android-arm64-release.tar.gz
+            stmanager-android-armeabi-v7a-release.tar.gz
+            stmanager-android-x86_64-release.tar.gz
