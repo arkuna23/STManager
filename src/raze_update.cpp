@@ -135,7 +135,8 @@ Status http_get_string(const std::string& url, std::string* output) {
 }
 
 Status http_download_file(const std::string& url, const std::string& destination_file) {
-    const Status parent_status = internal::ensure_parent_directories(destination_file, 0755);
+    const Status parent_status =
+        internal::ensure_parent_directories_following_existing_symlinks(destination_file, 0755);
     if (!parent_status.ok()) {
         return parent_status;
     }
@@ -184,10 +185,16 @@ std::string github_releases_api_url(const std::string& repository) {
 }
 
 Status extract_regular_file(struct archive* archive_reader, const std::string& destination_path,
-                            mode_t mode) {
-    const Status parent_status = internal::ensure_parent_directories(destination_path, 0755);
+                            mode_t mode, const std::string& destination_root,
+                            const std::string& archive_path) {
+    const Status parent_status =
+        internal::ensure_archive_entry_parent_directories(destination_root, archive_path, 0755);
     if (!parent_status.ok()) {
         return parent_status;
+    }
+    const Status symlink_status = internal::reject_existing_symlink(destination_path);
+    if (!symlink_status.ok()) {
+        return symlink_status;
     }
 
     std::ofstream output(destination_path.c_str(), std::ios::binary | std::ios::trunc);
@@ -604,7 +611,8 @@ Status read_local_raze_version_manifest(const std::string& root_path, bool* exis
 
 Status write_local_raze_version_manifest(const std::string& root_path,
                                          const RazeVersionManifest& manifest) {
-    const Status root_status = internal::ensure_directory_tree(root_path, 0755);
+    const Status root_status =
+        internal::ensure_directory_tree_following_existing_symlinks(root_path, 0755);
     if (!root_status.ok()) {
         return root_status;
     }
@@ -742,7 +750,8 @@ Status verify_raze_package_file(const std::string& file_path, const std::string&
 }
 
 Status extract_raze_package(const std::string& archive_file, const std::string& root_path) {
-    const Status root_status = internal::ensure_directory_tree(root_path, 0755);
+    const Status root_status =
+        internal::ensure_directory_tree_following_existing_symlinks(root_path, 0755);
     if (!root_status.ok()) {
         return root_status;
     }
@@ -800,16 +809,16 @@ Status extract_raze_package(const std::string& archive_file, const std::string& 
 
         const mode_t entry_mode = archive_entry_mode(entry);
         if (S_ISDIR(entry_mode)) {
-            const Status directory_status =
-                internal::ensure_directory_tree(destination_path, entry_mode & 0777);
+            const Status directory_status = internal::ensure_archive_entry_directory(
+                root_path, archive_path, entry_mode & 0777);
             if (!directory_status.ok()) {
                 archive_read_close(archive_reader);
                 archive_read_free(archive_reader);
                 return directory_status;
             }
         } else if (S_ISREG(entry_mode)) {
-            const Status file_status =
-                extract_regular_file(archive_reader, destination_path, entry_mode);
+            const Status file_status = extract_regular_file(archive_reader, destination_path,
+                                                            entry_mode, root_path, archive_path);
             if (!file_status.ok()) {
                 archive_read_close(archive_reader);
                 archive_read_free(archive_reader);

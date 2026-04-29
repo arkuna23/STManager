@@ -971,6 +971,61 @@ bool test_raze_extract_rejects_traversal_entry() {
     return context.failed_assertions == 0;
 }
 
+#ifndef _WIN32
+bool test_raze_extract_allows_symlinked_system_parent() {
+    TestContext context;
+
+    const std::string temp_dir =
+        STManagerTest::create_temp_directory("raze-extract-symlink-parent");
+    TempDirGuard temp_guard(temp_dir);
+    const std::string real_parent = STManagerTest::join_path(temp_dir, "real-parent");
+    const std::string symlink_parent = STManagerTest::join_path(temp_dir, "linked-parent");
+    EXPECT_TRUE(context, STManagerTest::create_directories(real_parent));
+    EXPECT_TRUE(context, symlink(real_parent.c_str(), symlink_parent.c_str()) == 0);
+
+    const std::string root_path = STManagerTest::join_path(symlink_parent, "SillyTavern");
+    const std::string archive_path = STManagerTest::join_path(temp_dir, "package.tar.zst");
+    const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {"server.js", "console.log('server');"},
+    });
+    EXPECT_TRUE(context, STManagerTest::write_file(archive_path, archive_bytes));
+
+    EXPECT_STATUS_OK(context, STManager::extract_raze_package(archive_path, root_path));
+    EXPECT_EQ(
+        context,
+        STManagerTest::read_file(STManagerTest::join_path(real_parent, "SillyTavern/server.js")),
+        std::string("console.log('server');"));
+
+    return context.failed_assertions == 0;
+}
+
+bool test_raze_extract_rejects_symlink_inside_root() {
+    TestContext context;
+
+    const std::string temp_dir = STManagerTest::create_temp_directory("raze-extract-root-symlink");
+    TempDirGuard temp_guard(temp_dir);
+    const std::string root_path = STManagerTest::join_path(temp_dir, "SillyTavern");
+    const std::string outside_path = STManagerTest::join_path(temp_dir, "outside");
+    EXPECT_TRUE(context, STManagerTest::create_directories(root_path));
+    EXPECT_TRUE(context, STManagerTest::create_directories(outside_path));
+    EXPECT_TRUE(context, symlink(outside_path.c_str(),
+                                 STManagerTest::join_path(root_path, "public").c_str()) == 0);
+
+    const std::string archive_path = STManagerTest::join_path(temp_dir, "package.tar.zst");
+    const std::string archive_bytes = create_valid_archive_bytes(std::vector<ArchiveFileEntry>{
+        {"public/index.html", "<html></html>"},
+    });
+    EXPECT_TRUE(context, STManagerTest::write_file(archive_path, archive_bytes));
+
+    const Status extract_status = STManager::extract_raze_package(archive_path, root_path);
+    EXPECT_TRUE(context, !extract_status.ok());
+    EXPECT_EQ(context, static_cast<int>(extract_status.code),
+              static_cast<int>(StatusCode::kInvalidArchiveEntry));
+
+    return context.failed_assertions == 0;
+}
+#endif
+
 bool test_sync_push_requires_trusted_device() {
     TestContext context;
 
@@ -1672,6 +1727,11 @@ int main() {
         {"raze_compute_sha256_and_verify_package", test_raze_compute_sha256_and_verify_package},
         {"raze_extract_package_to_root", test_raze_extract_package_to_root},
         {"raze_extract_rejects_traversal_entry", test_raze_extract_rejects_traversal_entry},
+#ifndef _WIN32
+        {"raze_extract_allows_symlinked_system_parent",
+         test_raze_extract_allows_symlinked_system_parent},
+        {"raze_extract_rejects_symlink_inside_root", test_raze_extract_rejects_symlink_inside_root},
+#endif
         {"sync_push_requires_trusted_device", test_sync_push_requires_trusted_device},
         {"sync_pair_then_push_success", test_sync_pair_then_push_success},
         {"sync_pull_restores_to_override_root", test_sync_pull_restores_to_override_root},

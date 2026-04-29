@@ -164,7 +164,8 @@ Status create_temp_directory_under(const std::string& base_directory, const std:
         return Status(StatusCode::kIoError, "Temporary directory output cannot be null");
     }
 
-    const Status ensure_status = ensure_directory_tree(base_directory, 0755);
+    const Status ensure_status =
+        ensure_directory_tree_following_existing_symlinks(base_directory, 0755);
     if (!ensure_status.ok()) {
         return ensure_status;
     }

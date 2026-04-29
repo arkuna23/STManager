@@ -464,11 +464,17 @@ Status write_manifest_file(struct archive* archive_writer, const std::string& js
     return finalize_archive_entry(archive_writer, "Failed to finalize manifest archive entry");
 }
 
-Status restore_regular_file(struct archive* archive_reader, const std::string& destination_path,
+Status restore_regular_file(struct archive* archive_reader, const std::string& destination_root,
+                            const std::string& archive_path, const std::string& destination_path,
                             mode_t mode) {
-    const Status parent_status = ensure_parent_directories(destination_path, 0755);
+    const Status parent_status =
+        ensure_archive_entry_parent_directories(destination_root, archive_path, 0755);
     if (!parent_status.ok()) {
         return parent_status;
+    }
+    const Status symlink_status = reject_existing_symlink(destination_path);
+    if (!symlink_status.ok()) {
+        return symlink_status;
     }
 
     int destination_fd =
@@ -508,8 +514,10 @@ Status restore_regular_file(struct archive* archive_reader, const std::string& d
     return Status::ok_status();
 }
 
-Status restore_directory(const std::string& destination_path, mode_t mode) {
-    const Status directory_status = ensure_directory_tree(destination_path, mode & 0777);
+Status restore_directory(const std::string& destination_root, const std::string& archive_path,
+                         mode_t mode) {
+    const Status directory_status =
+        ensure_archive_entry_directory(destination_root, archive_path, mode & 0777);
     if (!directory_status.ok()) {
         return directory_status;
     }
@@ -564,7 +572,8 @@ Status extract_archive_to_directory(struct archive* archive_reader,
         const mode_t file_type = static_cast<mode_t>(archive_entry_filetype(archive_entry));
         const mode_t entry_mode = static_cast<mode_t>(archive_entry_perm(archive_entry));
         if (file_type == AE_IFDIR) {
-            const Status directory_status = restore_directory(destination_path, entry_mode);
+            const Status directory_status =
+                restore_directory(destination_root, archive_path, entry_mode);
             if (!directory_status.ok()) {
                 return directory_status;
             }
@@ -572,8 +581,8 @@ Status extract_archive_to_directory(struct archive* archive_reader,
         }
 
         if (file_type == AE_IFREG) {
-            const Status file_status =
-                restore_regular_file(archive_reader, destination_path, entry_mode);
+            const Status file_status = restore_regular_file(
+                archive_reader, destination_root, archive_path, destination_path, entry_mode);
             if (!file_status.ok()) {
                 return file_status;
             }
@@ -928,7 +937,8 @@ Status restore_backup_archive(std::istream& in, const std::string& destination_r
         return Status(StatusCode::kInvalidRoot, "Restore destination root cannot be empty");
     }
 
-    const Status ensure_root_status = ensure_directory_tree(destination_root, 0755);
+    const Status ensure_root_status =
+        ensure_directory_tree_following_existing_symlinks(destination_root, 0755);
     if (!ensure_root_status.ok()) {
         return ensure_root_status;
     }

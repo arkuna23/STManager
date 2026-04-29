@@ -1,5 +1,4 @@
 #include "path_safety.h"
-#include "platform_compat.h"
 
 #include <sys/stat.h>
 
@@ -8,12 +7,18 @@
 #include <sstream>
 #include <vector>
 
+#include "platform_compat.h"
+
 namespace STManager {
 namespace internal {
 namespace {
 
 bool path_exists(const std::string& path, struct stat* path_stat) {
     return path_lstat(path.c_str(), path_stat) == 0;
+}
+
+bool followed_path_exists(const std::string& path, struct stat* path_stat) {
+    return stat(path.c_str(), path_stat) == 0;
 }
 
 std::vector<std::string> split_path(const std::string& path) {
@@ -48,11 +53,110 @@ Status validate_no_symlink_or_nondir(const std::string& directory_path) {
         return Status(StatusCode::kIoError, "Directory path component does not exist");
     }
     if (mode_is_symlink(path_stat.st_mode)) {
-        return Status(StatusCode::kInvalidArchiveEntry, "Refusing to traverse symlink in destination path");
+        return Status(StatusCode::kInvalidArchiveEntry,
+                      "Refusing to traverse symlink in destination path");
     }
     if (!S_ISDIR(path_stat.st_mode)) {
-        return Status(StatusCode::kInvalidArchiveEntry, "Destination path component is not a directory");
+        return Status(StatusCode::kInvalidArchiveEntry,
+                      "Destination path component is not a directory");
     }
+    return Status::ok_status();
+}
+
+Status validate_followed_directory(const std::string& directory_path) {
+    struct stat path_stat;
+    if (!followed_path_exists(directory_path, &path_stat)) {
+        return Status(StatusCode::kIoError, "Directory path component does not exist");
+    }
+    if (!S_ISDIR(path_stat.st_mode)) {
+        return Status(StatusCode::kInvalidArchiveEntry,
+                      "Destination path component is not a directory");
+    }
+    return Status::ok_status();
+}
+
+Status ensure_directory_tree_impl(const std::string& directory_path, int mode,
+                                  bool allow_symlinks) {
+    if (directory_path.empty()) {
+        return Status(StatusCode::kIoError, "Directory path is empty");
+    }
+
+    std::string current_path;
+    const bool is_absolute = directory_path[0] == '/';
+    if (is_absolute) {
+        current_path = "/";
+    }
+
+    const std::vector<std::string> path_parts = split_path(directory_path);
+    for (std::vector<std::string>::const_iterator it = path_parts.begin(); it != path_parts.end();
+         ++it) {
+        const std::string& path_part = *it;
+        if (path_part.empty()) {
+            continue;
+        }
+
+        current_path = join_path(current_path, path_part);
+
+        struct stat path_stat;
+        if (!path_exists(current_path, &path_stat)) {
+            if (path_mkdir(current_path.c_str(), mode) != 0) {
+                std::ostringstream message;
+                message << "Failed to create directory: " << current_path
+                        << ", reason: " << std::strerror(errno);
+                return Status(StatusCode::kIoError, message.str());
+            }
+            continue;
+        }
+
+        const Status validate_status = allow_symlinks ? validate_followed_directory(current_path)
+                                                      : validate_no_symlink_or_nondir(current_path);
+        if (!validate_status.ok()) {
+            return validate_status;
+        }
+    }
+
+    return Status::ok_status();
+}
+
+Status ensure_archive_entry_directory_impl(const std::string& destination_root,
+                                           const std::string& archive_path, int mode,
+                                           bool include_leaf) {
+    const Status path_status = validate_archive_relative_path(archive_path);
+    if (!path_status.ok()) {
+        return path_status;
+    }
+
+    const std::vector<std::string> path_parts = split_path(archive_path);
+    std::string current_path = destination_root;
+    for (std::vector<std::string>::size_type index = 0; index < path_parts.size(); ++index) {
+        const std::string& path_part = path_parts[index];
+        const bool is_last_part = (index + 1 == path_parts.size());
+        if (path_part.empty()) {
+            continue;
+        }
+        if (is_last_part && !include_leaf) {
+            break;
+        }
+
+        current_path = join_path(current_path, path_part);
+
+        struct stat path_stat;
+        if (!path_exists(current_path, &path_stat)) {
+            if (path_mkdir(current_path.c_str(), mode) != 0) {
+                std::ostringstream message;
+                message << "Failed to create directory: " << current_path
+                        << ", reason: " << std::strerror(errno);
+                return Status(StatusCode::kIoError, message.str());
+            }
+            continue;
+        }
+
+        const Status validate_status = validate_no_symlink_or_nondir(current_path);
+        if (!validate_status.ok()) {
+            return validate_status;
+        }
+    }
+
     return Status::ok_status();
 }
 
@@ -75,17 +179,16 @@ Status validate_archive_relative_path(const std::string& archive_path) {
             continue;
         }
         if (path_part.empty() || path_part == "." || path_part == "..") {
-            return Status(StatusCode::kInvalidArchiveEntry, "Archive path contains invalid segment");
+            return Status(StatusCode::kInvalidArchiveEntry,
+                          "Archive path contains invalid segment");
         }
     }
 
     return Status::ok_status();
 }
 
-Status join_destination_path(
-    const std::string& destination_root,
-    const std::string& archive_path,
-    std::string* destination_path) {
+Status join_destination_path(const std::string& destination_root, const std::string& archive_path,
+                             std::string* destination_path) {
     const Status path_status = validate_archive_relative_path(archive_path);
     if (!path_status.ok()) {
         return path_status;
@@ -96,43 +199,7 @@ Status join_destination_path(
 }
 
 Status ensure_directory_tree(const std::string& directory_path, int mode) {
-    if (directory_path.empty()) {
-        return Status(StatusCode::kIoError, "Directory path is empty");
-    }
-
-    std::string current_path;
-    const bool is_absolute = directory_path[0] == '/';
-    if (is_absolute) {
-        current_path = "/";
-    }
-
-    const std::vector<std::string> path_parts = split_path(directory_path);
-    for (std::vector<std::string>::const_iterator it = path_parts.begin(); it != path_parts.end(); ++it) {
-        const std::string& path_part = *it;
-        if (path_part.empty()) {
-            continue;
-        }
-
-        current_path = join_path(current_path, path_part);
-
-        struct stat path_stat;
-        if (!path_exists(current_path, &path_stat)) {
-            if (path_mkdir(current_path.c_str(), mode) != 0) {
-                std::ostringstream message;
-                message << "Failed to create directory: " << current_path << ", reason: "
-                        << std::strerror(errno);
-                return Status(StatusCode::kIoError, message.str());
-            }
-            continue;
-        }
-
-        const Status validate_status = validate_no_symlink_or_nondir(current_path);
-        if (!validate_status.ok()) {
-            return validate_status;
-        }
-    }
-
-    return Status::ok_status();
+    return ensure_directory_tree_impl(directory_path, mode, false);
 }
 
 Status ensure_parent_directories(const std::string& file_path, int mode) {
@@ -147,6 +214,52 @@ Status ensure_parent_directories(const std::string& file_path, int mode) {
     }
 
     return ensure_directory_tree(parent_directory, mode);
+}
+
+Status ensure_directory_tree_following_existing_symlinks(const std::string& directory_path,
+                                                         int mode) {
+    return ensure_directory_tree_impl(directory_path, mode, true);
+}
+
+Status ensure_parent_directories_following_existing_symlinks(const std::string& file_path,
+                                                             int mode) {
+    const std::string::size_type separator_index = file_path.find_last_of('/');
+    if (separator_index == std::string::npos) {
+        return Status::ok_status();
+    }
+
+    const std::string parent_directory = file_path.substr(0, separator_index);
+    if (parent_directory.empty()) {
+        return Status::ok_status();
+    }
+
+    return ensure_directory_tree_following_existing_symlinks(parent_directory, mode);
+}
+
+Status ensure_archive_entry_directory(const std::string& destination_root,
+                                      const std::string& archive_path, int mode) {
+    return ensure_archive_entry_directory_impl(destination_root, archive_path, mode, true);
+}
+
+Status ensure_archive_entry_parent_directories(const std::string& destination_root,
+                                               const std::string& archive_path, int mode) {
+    return ensure_archive_entry_directory_impl(destination_root, archive_path, mode, false);
+}
+
+Status reject_existing_symlink(const std::string& path) {
+    struct stat path_stat;
+    if (!path_exists(path, &path_stat)) {
+        if (errno == ENOENT) {
+            return Status::ok_status();
+        }
+        return Status(StatusCode::kIoError,
+                      std::string("Failed to inspect destination path: ") + std::strerror(errno));
+    }
+    if (mode_is_symlink(path_stat.st_mode)) {
+        return Status(StatusCode::kInvalidArchiveEntry,
+                      "Refusing to overwrite symlink in destination path");
+    }
+    return Status::ok_status();
 }
 
 }  // namespace internal
